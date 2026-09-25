@@ -58,6 +58,37 @@ def curve_compare_chart(wide, visible):
         gridColor="#252b33",domainColor="#4a515c",tickColor="#4a515c",labelColor="#aeb5bf",titleColor="#aeb5bf"
     )
 
+def dark_line_chart(df, xcol, ycols, height=330):
+    z=df[[xcol]+ycols].melt(id_vars=xcol,var_name="Series",value_name="Value").dropna()
+    ymin=float(z["Value"].min()); ymax=float(z["Value"].max())
+    pad=max((ymax-ymin)*0.18,0.08)
+    domain=["NOW","+1W","+1M","+3M","+6M","Implied rate %"]
+    colors=["#d8ff32","#79b8ff","#3f86ff","#ff6b6b","#ffb0b0","#d8ff32"]
+    return alt.Chart(z).mark_line(point=True,strokeWidth=3).encode(
+        x=alt.X(f"{xcol}:N",sort=list(df[xcol]),title=None,axis=alt.Axis(labelAngle=-45)),
+        y=alt.Y("Value:Q",title="Implied rate %",scale=alt.Scale(domain=[ymin-pad,ymax+pad],zero=False)),
+        color=alt.Color("Series:N",scale=alt.Scale(domain=domain,range=colors),legend=None),
+        tooltip=[alt.Tooltip(f"{xcol}:N"),"Series:N",alt.Tooltip("Value:Q",format=".3f")]
+    ).properties(height=height).configure_view(strokeOpacity=0).configure_axis(
+        gridColor="#252b33",domainColor="#4a515c",tickColor="#4a515c",
+        labelColor="#aeb5bf",titleColor="#aeb5bf"
+    )
+
+def dark_stress_chart(df):
+    z=df.copy()
+    ymin=float(z["P&L"].min()); ymax=float(z["P&L"].max())
+    span=max(ymax-ymin,abs(ymin),abs(ymax),1.0)
+    pad=span*.15
+    return alt.Chart(z).mark_bar(cornerRadiusTopLeft=4,cornerRadiusTopRight=4).encode(
+        x=alt.X("Scenario:N",sort=None,title=None,axis=alt.Axis(labelAngle=-45)),
+        y=alt.Y("P&L:Q",title="P&L €",scale=alt.Scale(domain=[min(0,ymin)-pad,max(0,ymax)+pad],zero=True)),
+        color=alt.condition(alt.datum["P&L"]>=0,alt.value("#d8ff32"),alt.value("#ff5d62")),
+        tooltip=["Scenario:N",alt.Tooltip("P&L:Q",format=",.0f",title="P&L €")]
+    ).properties(height=300).configure_view(strokeOpacity=0).configure_axis(
+        gridColor="#252b33",domainColor="#4a515c",tickColor="#4a515c",
+        labelColor="#aeb5bf",titleColor="#aeb5bf"
+    )
+
 def history_comparison(df, selected_date):
     dates=available_dates(df)
     if not dates: return {}
@@ -250,7 +281,7 @@ with curve:
                         c1,c2=st.columns(2); c1.metric('Front rate',f'{front:.3f}%'); c2.metric('Curve shape',shape,f'{slope:+.1f} bp')
                         p2=plot[[xcol,'Implied rate %']].copy()
                         p2[xcol]=p2[xcol].map(contract_label)
-                        st.line_chart(p2.set_index(xcol),use_container_width=True)
+                        st.altair_chart(dark_line_chart(p2,xcol,['Implied rate %']),use_container_width=True)
                         with st.expander('CURVE TABLE'): st.dataframe(plot[[xcol,pcol,'Implied rate %']],use_container_width=True,hide_index=True)
                         st.caption('Implied rate = 100 - futures price. Descriptive curve shape only; not an ECB forecast.')
             except Exception as e: st.error(f'Could not read curve CSV: {e}')
@@ -324,9 +355,9 @@ with stress:
             st.dataframe(sdf,use_container_width=True,hide_index=True)
         sr=stress_results(r["company"],r["target"])
         sdf=pd.DataFrame({"Scenario":list(sr["scenarios"].keys()),"P&L":list(sr["scenarios"].values())})
-        st.bar_chart(sdf.set_index("Scenario"),use_container_width=True)
+        st.altair_chart(dark_stress_chart(sdf),use_container_width=True)
         with st.expander("SCENARIO DEFINITIONS"):
             st.caption("First-order residual DV01 after hedge. Parallel +/-50 and +/-100bp, Front +50, Back +50, Bear steepener and Bull flattener.")
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V4.5 · exact hedge engine")
+st.caption("ATLAS RHO · Mobile V4.6 · exact hedge engine")
