@@ -148,12 +148,12 @@ with execute:
 
 with curve:
     st.subheader('EURIBOR CURVE')
-    mode=st.selectbox('CURVE VIEW',['CURRENT','HISTORY'],key='curve_view')
-    if mode=='CURRENT':
-        st.caption('Real market data only. Upload a current Euribor futures strip; no synthetic curve is generated.')
+    mode=st.selectbox('CURVE VIEW',['NOW','HISTORY'],key='curve_view')
+    if mode=='NOW':
+        st.caption('NOW = latest available Euribor futures curve. No synthetic curve is generated.')
         cu=st.file_uploader('EURIBOR CURVE CSV',type=['csv'],key='curve_csv')
         if cu is None:
-            st.info('Upload CSV with contract or expiry plus close, price, last, settle or settlement.')
+            st.info('Load the latest Euribor curve to show NOW. The screen will use the most recent available market date.')
         else:
             try:
                 cdf=pd.read_csv(cu)
