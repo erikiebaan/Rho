@@ -337,7 +337,7 @@ with curve:
                         st.caption('Implied rate = 100 - futures price. Descriptive curve shape only; not an ECB forecast.')
             except Exception as e: st.error(f'Could not read curve CSV: {e}')
     else:
-        st.caption('Kies een startdatum. Iedere lijn toont de volledige beschikbare Euribor-futurescurve op dat meetmoment. Het verschil tussen de lijnen is de verandering van de curve.')
+        st.caption('Kies twee meetmomenten. Iedere lijn toont de volledige beschikbare Euribor-futurescurve op die datum.')
         try:
             hu=pd.read_csv('atlas_euribor_history.csv')
         except Exception:
@@ -347,51 +347,47 @@ with curve:
         else:
             try:
                 hist=normalize_history(hu); dates=available_dates(hist)
-                if not dates: st.error('No valid history dates found.')
+                if not dates:
+                    st.error('No valid history dates found.')
                 else:
-                    hd=st.date_input('Historical date',value=dates[-1].date(),min_value=dates[0].date(),max_value=dates[-1].date(),key='history_date')
-                    comp=history_comparison(hist,hd)
-                    wide=None; labels=[]
-                    wanted=["NOW","+1W","+1M","+3M","+6M"]
-                    for label in wanted:
-                        if label in comp:
-                            z=comp[label]
-                            d=z['actual_date'].iloc[0].date(); labels.append(f'{label} · {d}')
-                            one=z[['contract','implied_rate']].copy()
-                            one['contract']=one['contract'].map(contract_label)
-                            one=one.rename(columns={'implied_rate':label}).set_index('contract')
-                            wide=one if wide is None else wide.join(one,how='outer')
-                        else:
-                            labels.append(f'{label} · N/A')
-                    available=[x for x in wanted if wide is not None and x in wide.columns]
-                    if wide is not None and available:
-                        start_date=comp["NOW"]["actual_date"].iloc[0].date() if "NOW" in comp else None
-                        st.markdown('<div class="section">VERGELIJK MEETMOMENTEN</div>',unsafe_allow_html=True)
-                        visible=st.multiselect("Meetmomenten",available,default=available,key="history_periods_fullcurve_v56",label_visibility="collapsed")
-                        if not visible: visible=["NOW"] if "NOW" in available else [available[0]]
-                        base=wide["NOW"] if "NOW" in wide.columns else wide[available[0]]
-                        cards=[]
-                        for lab in ["+1W","+1M","+3M","+6M"]:
-                            if lab in wide.columns:
-                                common=pd.concat([base,wide[lab]],axis=1).dropna()
-                                delta=(common.iloc[:,-1]-common.iloc[:,0]).mean()*100 if not common.empty else float("nan")
-                                d=comp[lab]["actual_date"].iloc[0].date()
-                                cards.append(f'<div class="kpi"><div class="kl">{lab} · {d.strftime("%d %b %y").upper()}</div><div class="kv">{delta:+.1f} bp</div><div class="rowsub">avg vs start curve</div></div>')
-                        if cards: st.markdown('<div class="kgrid">'+''.join(cards)+'</div>',unsafe_allow_html=True)
-                        if start_date: st.caption(f'START · {start_date.strftime("%d %b %Y").upper()}  · X-AS = WERKELIJKE EURIBOR-FUTURESCONTRACTEN')
-                        st.altair_chart(curve_compare_chart(wide,visible),use_container_width=True)
-                        display=wide.reset_index()
-                        for label in wanted:
-                            if label not in display.columns: display[label]="N/A"
-                        with st.expander('HISTORY TABLE'):
-                            st.dataframe(display[['contract']+wanted],use_container_width=True,hide_index=True)
-                    st.caption('Historische realisatie. Elke lijn gebruikt alle contracten die op dat meetmoment in de eigen ATLAS-database beschikbaar zijn. 5 / 21 / 63 / 126 handelsdagen = +1W / +1M / +3M / +6M. N/A = nog niet beschikbaar.')
+                    min_d=dates[0].date(); max_d=dates[-1].date()
+                    default_1=dates[max(0,len(dates)-126)].date()
+                    default_2=dates[-1].date()
+                    c1,c2=st.columns(2)
+                    d1=c1.date_input('MEETMOMENT 1',value=default_1,min_value=min_d,max_value=max_d,key='curve_date_1')
+                    d2=c2.date_input('MEETMOMENT 2',value=default_2,min_value=min_d,max_value=max_d,key='curve_date_2')
+
+                    def nearest_curve(chosen):
+                        target=pd.Timestamp(chosen).normalize()
+                        actual=min(dates,key=lambda d:abs((d-target).days))
+                        z=hist[hist['date']==actual][['contract','implied_rate']].copy()
+                        z['contract']=z['contract'].map(contract_label)
+                        return actual,z
+
+                    a1,z1=nearest_curve(d1); a2,z2=nearest_curve(d2)
+                    one=z1.rename(columns={'implied_rate':a1.date().strftime('%d-%m-%Y')}).set_index('contract')
+                    two=z2.rename(columns={'implied_rate':a2.date().strftime('%d-%m-%Y')}).set_index('contract')
+                    wide=one.join(two,how='outer')
+                    labs=list(wide.columns)
+
+                    long=wide.reset_index().melt(id_vars='contract',value_vars=labs,var_name='Meetmoment',value_name='Rate').dropna()
+                    order=list(wide.index)
+                    ymin=float(long['Rate'].min()); ymax=float(long['Rate'].max()); pad=max((ymax-ymin)*.22,.08)
+                    chart=alt.Chart(long).mark_line(point=True,strokeWidth=3).encode(
+                        x=alt.X('contract:N',sort=order,title='Euribor futures contract',axis=alt.Axis(labelAngle=-45)),
+                        y=alt.Y('Rate:Q',title='Implied rate %',scale=alt.Scale(domain=[ymin-pad,ymax+pad],zero=False)),
+                        color=alt.Color('Meetmoment:N',legend=alt.Legend(orient='bottom',title=None)),
+                        tooltip=['contract:N','Meetmoment:N',alt.Tooltip('Rate:Q',format='.3f')]
+                    ).properties(height=360,background='#080a0d').configure_view(strokeOpacity=0,fill='#080a0d').configure_axis(
+                        gridColor='#252b33',domainColor='#4a515c',tickColor='#4a515c',labelColor='#aeb5bf',titleColor='#aeb5bf'
+                    ).configure_legend(labelColor='#aeb5bf')
+                    st.altair_chart(chart,use_container_width=True,theme=None)
+                    st.caption(f'Meetmoment 1: {a1.date().strftime("%d-%m-%Y")} · Meetmoment 2: {a2.date().strftime("%d-%m-%Y")} · volledige beschikbare curves.')
+                    with st.expander('CURVE TABLE'):
+                        st.dataframe(wide.reset_index(),use_container_width=True,hide_index=True)
+                    st.caption('Iedere lijn is de volledige beschikbare Euribor-futurescurve op dat meetmoment. Het verschil tussen de twee lijnen is de verandering van de curve.')
             except Exception as e:
-                try:
-                    _dbg=pd.read_csv('atlas_euribor_history.csv',nrows=2)
-                    st.error(f"History debug | columns={list(_dbg.columns)} | error={type(e).__name__}: {e}")
-                except Exception as _e:
-                    st.error(f"History file debug failed: {type(_e).__name__}: {_e}")
+                st.error(f'History error: {type(e).__name__}: {e}')
 
 with stress:
     st.markdown('<div class="section">RISK AFTER EXACT HEDGE</div>',unsafe_allow_html=True)
@@ -426,4 +422,4 @@ with stress:
             st.caption("The source system supplies only expiry month and rho. That is enough for the agreed rho/DV01 hedge. It does not identify the exact curve/underlying bucket or how rho changes after a rate move. ATLAS therefore does not invent a post-hedge curve-loss number. Add underlying/curve-bucket or shocked-rho/scenario-P&L data later to quantify those risks.")
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V5.6 · full historical futures curve")
+st.caption("ATLAS RHO · Mobile V5.7 · two full-curve measurement dates")
