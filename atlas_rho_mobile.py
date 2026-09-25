@@ -297,7 +297,7 @@ with execute:
             )
 
 with curve:
-    st.subheader('EURIBOR CURVE')
+    st.subheader('HOE VERANDERDE DE EURIBOR-CURVE?')
     mode=st.selectbox('CURVE VIEW',['NOW','HISTORY'],key='curve_view')
     if mode=='NOW':
         st.caption('NOW = latest available Euribor futures curve from the built-in ATLAS database.')
@@ -337,7 +337,7 @@ with curve:
                         st.caption('Implied rate = 100 - futures price. Descriptive curve shape only; not an ECB forecast.')
             except Exception as e: st.error(f'Could not read curve CSV: {e}')
     else:
-        st.caption('Choose a historical date and compare the realized curve after 1 week, 1 month, 3 months and 6 months.')
+        st.caption('Kies een startdatum. Iedere lijn toont de volledige beschikbare Euribor-futurescurve op dat meetmoment. Het verschil tussen de lijnen is de verandering van de curve.')
         try:
             hu=pd.read_csv('atlas_euribor_history.csv')
         except Exception:
@@ -366,8 +366,8 @@ with curve:
                     available=[x for x in wanted if wide is not None and x in wide.columns]
                     if wide is not None and available:
                         start_date=comp["NOW"]["actual_date"].iloc[0].date() if "NOW" in comp else None
-                        st.markdown('<div class="section">COMPARE HORIZONS</div>',unsafe_allow_html=True)
-                        visible=st.multiselect("Periods",available,default=available,key="history_periods_v48",label_visibility="collapsed")
+                        st.markdown('<div class="section">VERGELIJK MEETMOMENTEN</div>',unsafe_allow_html=True)
+                        visible=st.multiselect("Meetmomenten",available,default=available,key="history_periods_fullcurve_v56",label_visibility="collapsed")
                         if not visible: visible=["NOW"] if "NOW" in available else [available[0]]
                         base=wide["NOW"] if "NOW" in wide.columns else wide[available[0]]
                         cards=[]
@@ -378,14 +378,14 @@ with curve:
                                 d=comp[lab]["actual_date"].iloc[0].date()
                                 cards.append(f'<div class="kpi"><div class="kl">{lab} · {d.strftime("%d %b %y").upper()}</div><div class="kv">{delta:+.1f} bp</div><div class="rowsub">avg vs start curve</div></div>')
                         if cards: st.markdown('<div class="kgrid">'+''.join(cards)+'</div>',unsafe_allow_html=True)
-                        if start_date: st.caption(f'START · {start_date.strftime("%d %b %Y").upper()}  →  realized curve comparison')
+                        if start_date: st.caption(f'START · {start_date.strftime("%d %b %Y").upper()}  · X-AS = WERKELIJKE EURIBOR-FUTURESCONTRACTEN')
                         st.altair_chart(curve_compare_chart(wide,visible),use_container_width=True)
                         display=wide.reset_index()
                         for label in wanted:
                             if label not in display.columns: display[label]="N/A"
                         with st.expander('HISTORY TABLE'):
                             st.dataframe(display[['contract']+wanted],use_container_width=True,hide_index=True)
-                    st.caption('Realized history only. 5 / 21 / 63 / 126 trading days = 1W / 1M / 3M / 6M. N/A means that horizon is not yet available.')
+                    st.caption('Historische realisatie. Elke lijn gebruikt alle contracten die op dat meetmoment in de eigen ATLAS-database beschikbaar zijn. 5 / 21 / 63 / 126 handelsdagen = +1W / +1M / +3M / +6M. N/A = nog niet beschikbaar.')
             except Exception as e:
                 try:
                     _dbg=pd.read_csv('atlas_euribor_history.csv',nrows=2)
@@ -426,4 +426,4 @@ with stress:
             st.caption("The source system supplies only expiry month and rho. That is enough for the agreed rho/DV01 hedge. It does not identify the exact curve/underlying bucket or how rho changes after a rate move. ATLAS therefore does not invent a post-hedge curve-loss number. Add underlying/curve-bucket or shocked-rho/scenario-P&L data later to quantify those risks.")
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V5.5 · exact hedge engine")
+st.caption("ATLAS RHO · Mobile V5.6 · full historical futures curve")
