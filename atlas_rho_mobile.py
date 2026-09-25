@@ -231,7 +231,16 @@ with risk:
     if r:
         df=pd.DataFrame({"Contract":r["contracts"],"Company":r["company"],"Hedge":[-q*25 for q in r["target"]]})
         st.markdown('<div class="section">QUARTERLY DV01</div>',unsafe_allow_html=True)
-        st.bar_chart(df.set_index("Contract"),use_container_width=True)
+        qz=df.melt(id_vars="Contract",value_vars=["Company","Hedge"],var_name="Series",value_name="DV01")
+        qchart=alt.Chart(qz).mark_bar().encode(
+            x=alt.X("Contract:N",sort=r["contracts"],title=None,axis=alt.Axis(labelAngle=-45)),
+            y=alt.Y("DV01:Q",title="DV01 €/bp"),
+            color=alt.Color("Series:N",scale=alt.Scale(domain=["Company","Hedge"],range=["#d8ff32","#6f7b8a"]),legend=alt.Legend(orient="bottom",title=None)),
+            tooltip=["Contract:N","Series:N",alt.Tooltip("DV01:Q",format=",.1f")]
+        ).properties(height=300,background="#080a0d").configure_view(strokeOpacity=0,fill="#080a0d").configure_axis(
+            gridColor="#252b33",domainColor="#4a515c",tickColor="#4a515c",labelColor="#aeb5bf",titleColor="#aeb5bf"
+        ).configure_legend(labelColor="#aeb5bf")
+        st.altair_chart(qchart,use_container_width=True,theme=None)
 
 with execute:
     if not r: st.info("Calculate the company risk first.")
@@ -360,4 +369,4 @@ with stress:
             st.caption("First-order residual DV01 after hedge. Parallel +/-50 and +/-100bp, Front +50, Back +50, Bear steepener and Bull flattener.")
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V4.9 · exact hedge engine")
+st.caption("ATLAS RHO · Mobile V5.0 · exact hedge engine")
