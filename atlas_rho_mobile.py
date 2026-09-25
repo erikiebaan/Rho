@@ -360,21 +360,79 @@ with curve:
                     st.error(f"History file debug failed: {type(_e).__name__}: {_e}")
 
 with stress:
-    st.markdown('<div class="section">STRESS LAB</div>',unsafe_allow_html=True)
-    if not r: st.info("Calculate the company risk first.")
+    st.markdown('<div class="section">RISK AFTER EXACT HEDGE</div>',unsafe_allow_html=True)
+    if not r:
+        st.info("Calculate the company risk first.")
     else:
-        res=0.0 if abs(r["parallel_residual_dv01"])<1e-8 else float(r["parallel_residual_dv01"])
-        vals=[res*x for x in (-100,-50,50,100)]
-        if all(abs(x)<.005 for x in vals):
-            st.markdown('<div class="kpi"><div class="kl">PARALLEL STRESS</div><div class="kv good">€0</div><div class="rowsub">Exact parallel hedge · ±50 / ±100bp</div></div>',unsafe_allow_html=True)
-        else:
-            sdf=pd.DataFrame({"Scenario":["−100bp","−50bp","+50bp","+100bp"],"P&L":vals})
-            st.dataframe(sdf,use_container_width=True,hide_index=True)
-        sr=stress_results(r["company"],r["target"])
-        sdf=pd.DataFrame({"Scenario":list(sr["scenarios"].keys()),"P&L":list(sr["scenarios"].values())})
-        st.altair_chart(dark_stress_chart(sdf),use_container_width=True)
-        with st.expander("SCENARIO DEFINITIONS"):
-            st.caption("First-order residual DV01 after hedge. Parallel +/-50 and +/-100bp, Front +50, Back +50, Bear steepener and Bull flattener.")
+        company=[float(x) for x in r["company"]]
+        hedge=[-float(q)*25.0 for q in r["target"]]
+        residual=[company[i]+hedge[i] for i in range(len(company))]
+        contracts=list(r["contracts"])
+
+        # Scanner shocks are deliberately simple first-order DV01 attacks.
+        # They locate residual curve risk after the exact parallel hedge; they are not forecasts.
+        shocks=[]
+        def add_shock(name, vec, location, cause):
+            pnl=sum(residual[i]*vec[i] for i in range(len(residual)))
+            shocks.append({"Scenario":name,"P&L":pnl,"Location":location,"Cause":cause})
+
+        n=len(residual)
+        for i,c in enumerate(contracts):
+            v=[0.0]*n; v[i]=50.0
+            add_shock(f"{c} +50bp",v,c,"Local quarterly rate rise")
+            v=[0.0]*n; v[i]=-50.0
+            add_shock(f"{c} −50bp",v,c,"Local quarterly rate fall")
+
+        for i in range(max(0,n-1)):
+            v=[0.0]*n; v[i]=50.0; v[i+1]=-50.0
+            add_shock(f"Kink {contracts[i]} / {contracts[i+1]}",v,f"{contracts[i]} → {contracts[i+1]}","Adjacent quarters move in opposite directions")
+            v=[-x for x in v]
+            add_shock(f"Reverse kink {contracts[i]} / {contracts[i+1]}",v,f"{contracts[i]} → {contracts[i+1]}","Adjacent quarters move in opposite directions")
+
+        for i in range(1,max(1,n-1)):
+            if i+1<n:
+                v=[0.0]*n; v[i-1]=-25.0; v[i]=50.0; v[i+1]=-25.0
+                add_shock(f"Butterfly {contracts[i]}",v,contracts[i],"Middle quarter moves against both neighbours")
+                add_shock(f"Reverse butterfly {contracts[i]}",[-x for x in v],contracts[i],"Middle quarter moves against both neighbours")
+
+        if n:
+            # Smooth front/back twists around zero: catches slope risk without adding parallel risk.
+            mid=(n-1)/2.0
+            raw=[i-mid for i in range(n)]
+            mx=max(abs(x) for x in raw) or 1.0
+            twist=[50.0*x/mx for x in raw]
+            add_shock("Curve twist",twist,f"{contracts[0]} → {contracts[-1]}","Back rises while front falls")
+            add_shock("Reverse curve twist",[-x for x in twist],f"{contracts[0]} → {contracts[-1]}","Front rises while back falls")
+
+        parallel=float(r["parallel_residual_dv01"])
+        parallel100=parallel*100.0
+        worst=min(shocks,key=lambda x:x["P&L"]) if shocks else {"P&L":0.0,"Location":"—","Cause":"—","Scenario":"—"}
+        top=sorted(shocks,key=lambda x:x["P&L"])[:5]
+
+        st.markdown(
+            '<div class="kgrid">'
+            f'<div class="kpi"><div class="kl">PARALLEL ±100BP</div><div class="kv good">€{abs(parallel100):,.0f}</div><div class="rowsub">exact parallel hedge</div></div>'
+            f'<div class="kpi"><div class="kl">WORST SCANNED LOSS</div><div class="kv bad">−€{abs(min(0.0,worst["P&L"])):,.0f}</div><div class="rowsub">first-order curve risk</div></div>'
+            '</div>',unsafe_allow_html=True
+        )
+        st.markdown(
+            f'<div class="order"><div class="orderhead"><span class="side">RISK</span><span class="qty">{html.escape(str(worst["Location"]))}</span></div>'
+            f'<div class="route">{html.escape(str(worst["Cause"]))}</div><div class="rowsub">{html.escape(str(worst["Scenario"]))} · P&L €{worst["P&L"]:,.0f}</div></div>',
+            unsafe_allow_html=True
+        )
+
+        rdf=pd.DataFrame(top)
+        if not rdf.empty:
+            st.markdown('<div class="section">TOP RESIDUAL RISKS</div>',unsafe_allow_html=True)
+            st.altair_chart(dark_stress_chart(rdf[["Scenario","P&L"]]),use_container_width=True)
+            for j,x in enumerate(top,1):
+                st.markdown(
+                    f'<div class="reconrow"><span>{j}. {html.escape(str(x["Location"]))}</span><span>{html.escape(str(x["Cause"]))}</span><span>€{x["P&L"]:,.0f}</span></div>',
+                    unsafe_allow_html=True
+                )
+
+        with st.expander("WHAT IS BEING TESTED"):
+            st.caption("ATLAS starts after the exact parallel hedge and searches for remaining first-order curve risk: single-quarter ±50bp shocks, adjacent-quarter kinks, three-quarter butterflies and full-curve twists. It ranks the largest losses. These are standardized stress tests, not forecasts. Option rho can change after large market moves, so this is not full option repricing.")
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V5.1 · exact hedge engine")
+st.caption("ATLAS RHO · Mobile V5.2 · exact hedge engine")
