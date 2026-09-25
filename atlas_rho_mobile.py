@@ -316,7 +316,7 @@ with curve:
                     if wide is not None and available:
                         start_date=comp["NOW"]["actual_date"].iloc[0].date() if "NOW" in comp else None
                         st.markdown('<div class="section">COMPARE HORIZONS</div>',unsafe_allow_html=True)
-                        visible=st.multiselect("Periods",available,default=available,key="history_periods",label_visibility="collapsed")
+                        visible=st.multiselect("Periods",available,default=available,key="history_periods_v47",label_visibility="collapsed")
                         if not visible: visible=["NOW"] if "NOW" in available else [available[0]]
                         base=wide["NOW"] if "NOW" in wide.columns else wide[available[0]]
                         cards=[]
@@ -360,4 +360,4 @@ with stress:
             st.caption("First-order residual DV01 after hedge. Parallel +/-50 and +/-100bp, Front +50, Back +50, Bear steepener and Bull flattener.")
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V4.6 · exact hedge engine")
+st.caption("ATLAS RHO · Mobile V4.7 · exact hedge engine")
