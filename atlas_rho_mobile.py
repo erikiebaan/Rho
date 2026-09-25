@@ -26,7 +26,7 @@ h1,h2,h3,p{{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",Inter,
 .kv{{font-size:1.35rem;color:#f6f7f8;font-weight:600;margin-top:8px;letter-spacing:-.03em}}
 .good{{color:{ACCENT}}}
 .section{{font-size:.72rem;letter-spacing:.13em;color:#7e8794;font-weight:700;margin:1.2rem 0 .55rem}}
-.rowcard{{display:flex;align-items:center;justify-content:space-between;background:#111419;border:1px solid #22272f;border-radius:15px;padding:12px 14px;margin:7px 0}}
+.rowcard{{display:flex;align-items:center;justify-content:space-between;background:#111419;border:1px solid #22272f;border-radius:13px;padding:8px 12px;margin:5px 0}}
 .rowmain{{font-size:.94rem;color:#f2f4f7;font-weight:600}} .rowsub{{font-size:.7rem;color:#747d89;margin-top:3px}}
 .num{{font-size:1rem;font-weight:650}}
 .order{{background:#111419;border:1px solid #22272f;border-radius:17px;padding:13px 15px;margin:8px 0}}
@@ -36,7 +36,7 @@ h1,h2,h3,p{{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",Inter,
 .stButton>button{{border-radius:14px;min-height:46px;font-weight:700;border:1px solid #292f38;background:#171b21;color:#f5f6f7}}
 .stButton>button[kind="primary"]{{background:{ACCENT};color:#090b0e;border:0}}
 div[data-baseweb="tab-list"]{{gap:2px;background:#0d1014;padding:4px;border-radius:15px;position:sticky;top:.25rem;z-index:10}}
-button[data-baseweb="tab"]{{border-radius:11px;font-size:.77rem;padding:.45rem .65rem}}
+button[data-baseweb="tab"]{{border-radius:11px;font-size:.77rem;padding:.45rem .65rem;color:#7e8794}}\nbutton[data-baseweb="tab"][aria-selected="true"]{{color:#d8ff32!important}}\ndiv[data-baseweb="tab-highlight"]{{background-color:#d8ff32!important}}
 div[data-testid="stExpander"]{{background:#0f1217;border:1px solid #232832;border-radius:15px}}
 [data-testid="stMetric"]{{background:#12161c;border:1px solid #252b34;border-radius:17px;padding:12px}}
 [data-testid="stMetricValue"]{{color:#f5f7f9!important}}
@@ -99,7 +99,7 @@ with risk:
     if not st.session_state.buckets:
         st.markdown('<div class="muted">No rho buckets yet. Add one below or load the audited test case.</div>',unsafe_allow_html=True)
     for i,x in enumerate(st.session_state.buckets):
-        st.markdown(f'<div class="rowcard"><div><div class="rowmain">{html.escape(x["expiry"].strftime("%b %y").upper())}</div><div class="rowsub">RHO / +100BP</div></div><div class="num">{money_short(x["rho"])}</div></div>',unsafe_allow_html=True)
+        st.markdown(f'<div class="rowcard"><div><div class="rowmain">{html.escape(x["expiry"].strftime("%b %y").upper())}</div></div><div class="num">{money_short(x["rho"])}</div></div>',unsafe_allow_html=True)
 
     with st.expander("＋  ADD / EDIT BUCKETS",expanded=False):
         n=st.number_input("Number of buckets",1,20,max(1,len(st.session_state.buckets)),1,key="bucket_n")
