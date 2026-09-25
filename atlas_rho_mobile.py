@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 from atlas_rho_engine import Bucket, full_result, DEFAULT_EXECUTION
 from atlas_rho_stress import stress_results
+from atlas_rho_history import normalize_history, available_dates, comparison
 
 st.set_page_config(page_title="ATLAS RHO",page_icon="◼",layout="centered",initial_sidebar_state="collapsed")
 
@@ -147,39 +148,57 @@ with execute:
 
 with curve:
     st.subheader('EURIBOR CURVE')
-    st.caption('Real market data only. Upload a current Euribor futures strip; no synthetic curve is generated.')
-    cu=st.file_uploader('EURIBOR CURVE CSV',type=['csv'],key='curve_csv')
-    if cu is None:
-        st.info('Upload CSV with contract or expiry plus close, price, last, settle or settlement.')
-    else:
-        try:
-            cdf=pd.read_csv(cu)
-            cmap={str(c).strip().lower():c for c in cdf.columns}
-            pcol=next((cmap[k] for k in ('close','price','last','settle','settlement') if k in cmap),None)
-            xcol=next((cmap[k] for k in ('contract','expiry','maturity') if k in cmap),None)
-            if pcol is None or xcol is None:
-                st.error('CSV needs contract/expiry and price/close/last/settle columns.')
-            else:
-                plot=cdf[[xcol,pcol]].copy()
-                plot[pcol]=pd.to_numeric(plot[pcol],errors='coerce')
-                plot=plot.dropna(subset=[pcol]).drop_duplicates(subset=[xcol],keep='last')
-                plot['Implied rate %']=100.0-plot[pcol]
-                if plot.empty:
-                    st.error('No valid futures prices found.')
+    mode=st.radio('MODE',['CURRENT','HISTORY'],horizontal=True,label_visibility='collapsed')
+    if mode=='CURRENT':
+        st.caption('Real market data only. Upload a current Euribor futures strip; no synthetic curve is generated.')
+        cu=st.file_uploader('EURIBOR CURVE CSV',type=['csv'],key='curve_csv')
+        if cu is None:
+            st.info('Upload CSV with contract or expiry plus close, price, last, settle or settlement.')
+        else:
+            try:
+                cdf=pd.read_csv(cu)
+                cmap={str(c).strip().lower():c for c in cdf.columns}
+                pcol=next((cmap[k] for k in ('close','price','last','settle','settlement') if k in cmap),None)
+                xcol=next((cmap[k] for k in ('contract','expiry','maturity') if k in cmap),None)
+                if pcol is None or xcol is None:
+                    st.error('CSV needs contract/expiry and price/close/last/settle columns.')
                 else:
-                    front=float(plot['Implied rate %'].iloc[0])
-                    back=float(plot['Implied rate %'].iloc[-1])
-                    slope=(back-front)*100.0
-                    shape='UPWARD' if slope>5 else 'DOWNWARD' if slope<-5 else 'FLAT'
-                    c1,c2=st.columns(2)
-                    c1.metric('Front rate',f'{front:.3f}%')
-                    c2.metric('Curve shape',shape,f'{slope:+.1f} bp')
-                    st.line_chart(plot[[xcol,'Implied rate %']].set_index(xcol),use_container_width=True)
-                    with st.expander('CURVE TABLE'):
-                        st.dataframe(plot[[xcol,pcol,'Implied rate %']],use_container_width=True,hide_index=True)
-                    st.caption('Implied rate = 100 - futures price. Descriptive curve shape only; not an ECB forecast.')
-        except Exception as e:
-            st.error(f'Could not read curve CSV: {e}')
+                    plot=cdf[[xcol,pcol]].copy()
+                    plot[pcol]=pd.to_numeric(plot[pcol],errors='coerce')
+                    plot=plot.dropna(subset=[pcol]).drop_duplicates(subset=[xcol],keep='last')
+                    plot['Implied rate %']=100.0-plot[pcol]
+                    if plot.empty:
+                        st.error('No valid futures prices found.')
+                    else:
+                        front=float(plot['Implied rate %'].iloc[0]); back=float(plot['Implied rate %'].iloc[-1]); slope=(back-front)*100.0
+                        shape='UPWARD' if slope>5 else 'DOWNWARD' if slope<-5 else 'FLAT'
+                        c1,c2=st.columns(2); c1.metric('Front rate',f'{front:.3f}%'); c2.metric('Curve shape',shape,f'{slope:+.1f} bp')
+                        st.line_chart(plot[[xcol,'Implied rate %']].set_index(xcol),use_container_width=True)
+                        with st.expander('CURVE TABLE'): st.dataframe(plot[[xcol,pcol,'Implied rate %']],use_container_width=True,hide_index=True)
+                        st.caption('Implied rate = 100 - futures price. Descriptive curve shape only; not an ECB forecast.')
+            except Exception as e: st.error(f'Could not read curve CSV: {e}')
+    else:
+        st.caption('Choose a historical date and compare the realized curve after 1 week, 1 month, 3 months and 6 months.')
+        hu=st.file_uploader('EURIBOR HISTORY CSV',type=['csv'],key='history_csv')
+        if hu is None:
+            st.info('Upload historical CSV with date, contract/expiry and close/price/settle.')
+        else:
+            try:
+                hist=normalize_history(pd.read_csv(hu)); dates=available_dates(hist)
+                if not dates: st.error('No valid history dates found.')
+                else:
+                    hd=st.date_input('Historical date',value=dates[-1].date(),min_value=dates[0].date(),max_value=dates[-1].date(),key='history_date')
+                    comp=comparison(hist,hd)
+                    wide=None; labels=[]
+                    for label,z in comp.items():
+                        d=z['actual_date'].iloc[0].date(); labels.append(f'{label} · {d}')
+                        one=z[['contract','implied_rate']].rename(columns={'implied_rate':label}).set_index('contract')
+                        wide=one if wide is None else wide.join(one,how='outer')
+                    st.caption('  |  '.join(labels))
+                    st.line_chart(wide,use_container_width=True)
+                    with st.expander('HISTORY TABLE'): st.dataframe(wide.reset_index(),use_container_width=True,hide_index=True)
+                    st.caption('Forward horizons use 5 / 21 / 63 / 126 available trading days. This shows realized history, not a forecast.')
+            except Exception as e: st.error(f'Could not read history CSV: {e}')
 
 with stress:
     st.markdown('<div class="section">STRESS LAB</div>',unsafe_allow_html=True)
