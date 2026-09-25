@@ -15,7 +15,7 @@ st.markdown(f"""
 .block-container{{max-width:720px;padding:.7rem 1rem 5.5rem}}
 header[data-testid="stHeader"]{{background:transparent}}
 h1,h2,h3,p{{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",Inter,sans-serif}}
-#MainMenu,footer{{visibility:hidden}}
+#MainMenu,footer{{visibility:hidden}}\n[data-testid='stToolbar']{{visibility:hidden;height:0}}\n[data-testid='stDecoration']{{display:none}}
 .hero{{padding:.5rem .1rem .9rem}}
 .brand{{font-size:.72rem;letter-spacing:.24em;color:#8b929e;font-weight:700}}
 .title{{font-size:2.05rem;font-weight:650;letter-spacing:-.035em;margin:.2rem 0}}
@@ -37,7 +37,7 @@ h1,h2,h3,p{{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",Inter,
 .stButton>button{{border-radius:14px;min-height:46px;font-weight:700;border:1px solid #292f38;background:#171b21;color:#f5f6f7}}
 .stButton>button[kind="primary"]{{background:{ACCENT};color:#090b0e;border:0}}
 div[data-baseweb="tab-list"]{{gap:2px;background:#0d1014;padding:4px;border-radius:15px;position:sticky;top:.25rem;z-index:10}}
-button[data-baseweb="tab"]{{border-radius:11px;font-size:.77rem;padding:.45rem .65rem;color:#7e8794}}\nbutton[data-baseweb="tab"][aria-selected="true"]{{color:#d8ff32!important}}\ndiv[data-baseweb="tab-highlight"]{{background-color:#d8ff32!important}}
+button[data-baseweb="tab"]{{border-radius:11px;font-size:.77rem;padding:.45rem .65rem;color:#7e8794!important}}\nbutton[data-baseweb="tab"][aria-selected="true"]{{color:#d8ff32!important}}\ndiv[data-baseweb="tab-highlight"]{{background-color:#d8ff32!important}}\nbutton[data-baseweb='tab'][aria-selected='true'] p{{color:#d8ff32!important}}\n[data-testid='stFileUploaderDropzone']{{background:#111419!important;border:1px solid #252a31!important;border-radius:17px!important}}\n[data-testid='stFileUploaderDropzone'] button{{background:#171b21!important;color:#f5f6f7!important;border:1px solid #292f38!important}}\n[data-testid='stAlert']{{background:#111419!important;border:1px solid #252a31!important;color:#aeb5bf!important}}
 div[data-testid="stExpander"]{{background:#0f1217;border:1px solid #232832;border-radius:15px}}
 [data-testid="stMetric"]{{background:#12161c;border:1px solid #252b34;border-radius:17px;padding:12px}}
 [data-testid="stMetricValue"]{{color:#f5f7f9!important}}
@@ -143,7 +143,7 @@ with execute:
                 st.markdown(f'<div class="order"><div class="orderhead"><span class="side">{side}</span><span class="qty">{abs(q)} · {html.escape(name.upper())}</span></div><div class="route">{html.escape(route)}</div></div>',unsafe_allow_html=True)
         else: st.success("No trade required.")
         with st.expander("QUARTERLY RECONCILIATION"):
-            st.dataframe(pd.DataFrame({"Contract":r["contracts"],"DV01":r["company"],"Target":r["target"],"Current":r["current"],"Trade":r["trade"]}),use_container_width=True,hide_index=True)
+            st.dataframe(pd.DataFrame({"Contract":r["contracts"],"Target":r["target"],"Trade":r["trade"]}),use_container_width=True,hide_index=True)
 
 with curve:
     st.subheader('EURIBOR CURVE')
@@ -191,7 +191,7 @@ with stress:
             st.markdown('<div class="kpi"><div class="kl">PARALLEL STRESS</div><div class="kv good">€0</div><div class="rowsub">Exact parallel hedge · ±50 / ±100bp</div></div>',unsafe_allow_html=True)
         else:
             sdf=pd.DataFrame({"Scenario":["−100bp","−50bp","+50bp","+100bp"],"P&L":vals})
-            st.bar_chart(sdf.set_index("Scenario"),use_container_width=True)
+            st.dataframe(sdf,use_container_width=True,hide_index=True)
         sr=stress_results(r["company"],r["target"])
         sdf=pd.DataFrame({"Scenario":list(sr["scenarios"].keys()),"P&L":list(sr["scenarios"].values())})
         st.bar_chart(sdf.set_index("Scenario"),use_container_width=True)
@@ -199,4 +199,4 @@ with stress:
             st.caption("First-order residual DV01 after hedge. Parallel +/-50 and +/-100bp, Front +50, Back +50, Bear steepener and Bull flattener.")
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V3 · exact hedge engine")
+st.caption("ATLAS RHO · Mobile V4 · exact hedge engine")
