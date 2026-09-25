@@ -26,7 +26,7 @@ def parse_rho_paste(raw):
         try: rho=float(num)
         except ValueError:
             bad.append(line); continue
-        out.append({"name":f"{m.group(1).title()} {str(y)[-2:]}","expiry":date(y,mon,1),"rho":rho})
+        out.append({"name":f"{m.group(1).title()} {str(y)[-2:]}","expiry":date(y,mon,1),"rho":rho,"hedge":True})
     return out,bad
 
 def normalize_history(df):
@@ -182,13 +182,13 @@ def reset_widget_keys():
 def load_test():
     st.session_state.val=date(2026,9,25)
     st.session_state.buckets=[
-      {"name":"Nov 26","expiry":date(2026,11,1),"rho":-100000.0},
-      {"name":"Jan 27","expiry":date(2027,1,1),"rho":-150000.0},
-      {"name":"Jun 27","expiry":date(2027,6,1),"rho":-400000.0},
-      {"name":"Dec 27","expiry":date(2027,12,1),"rho":500000.0},
-      {"name":"Feb 28","expiry":date(2028,2,1),"rho":-1250000.0},
-      {"name":"Sep 28","expiry":date(2028,9,1),"rho":-250000.0},
-      {"name":"Dec 28","expiry":date(2028,12,1),"rho":800000.0}]
+      {"name":"Nov 26","expiry":date(2026,11,1),"rho":-100000.0,"hedge":True},
+      {"name":"Jan 27","expiry":date(2027,1,1),"rho":-150000.0,"hedge":True},
+      {"name":"Jun 27","expiry":date(2027,6,1),"rho":-400000.0,"hedge":True},
+      {"name":"Dec 27","expiry":date(2027,12,1),"rho":500000.0,"hedge":True},
+      {"name":"Feb 28","expiry":date(2028,2,1),"rho":-1250000.0,"hedge":True},
+      {"name":"Sep 28","expiry":date(2028,9,1),"rho":-250000.0,"hedge":True},
+      {"name":"Dec 28","expiry":date(2028,12,1),"rho":800000.0,"hedge":True}]
     reset_widget_keys()
     st.session_state.result=None
 
@@ -201,18 +201,22 @@ st.markdown('<div class="hero"><div class="brand">ATLAS · RATES RISK</div><div 
 
 if r:
     side="S" if r["target_net"]<0 else "L" if r["target_net"]>0 else "—"
-    resid=0.0 if abs(r["parallel_residual_dv01"])<1e-8 else r["parallel_residual_dv01"]
+    total_rho=float(r.get("total_company_rho",r["company_rho"]))
+    selected_rho=float(r.get("selected_company_rho",r["company_rho"]))
+    open_rho=float(r.get("intentional_open_rho",0.0))
+    company_status="PARTIAL" if abs(open_rho)>0.005 else "EXACT ✓"
     st.markdown(f'''<div class="kgrid">
-    <div class="kpi"><div class="kl">COMPANY RHO</div><div class="kv">{money_short(r["company_rho"])}</div></div>
-    <div class="kpi"><div class="kl">DV01</div><div class="kv">{money_short(r["company_dv01"])}/bp</div></div>
-    <div class="kpi"><div class="kl">HEDGE</div><div class="kv">{abs(r["target_net"])} {side}</div></div>
-    <div class="kpi"><div class="kl">RESIDUAL</div><div class="kv good">€{resid:,.0f}/bp</div></div></div>''',unsafe_allow_html=True)
+    <div class="kpi"><div class="kl">COMPANY RHO</div><div class="kv">{money_short(total_rho)}</div></div>
+    <div class="kpi"><div class="kl">RHO TO HEDGE</div><div class="kv">{money_short(selected_rho)}</div></div>
+    <div class="kpi"><div class="kl">INTENTIONAL OPEN</div><div class="kv">{money_short(open_rho)}</div></div>
+    <div class="kpi"><div class="kl">COMPANY HEDGE STATUS</div><div class="kv {'good' if company_status.startswith('EXACT') else ''}">{company_status}</div></div></div>''',unsafe_allow_html=True)
+
 else:
-    st.markdown('''<div class="kgrid"><div class="kpi"><div class="kl">COMPANY RHO</div><div class="kv">—</div></div><div class="kpi"><div class="kl">DV01</div><div class="kv">—</div></div><div class="kpi"><div class="kl">HEDGE</div><div class="kv">—</div></div><div class="kpi"><div class="kl">RESIDUAL</div><div class="kv">—</div></div></div>''',unsafe_allow_html=True)
+    st.markdown('''<div class="kgrid"><div class="kpi"><div class="kl">COMPANY RHO</div><div class="kv">—</div></div><div class="kpi"><div class="kl">RHO TO HEDGE</div><div class="kv">—</div></div><div class="kpi"><div class="kl">INTENTIONAL OPEN</div><div class="kv">—</div></div><div class="kpi"><div class="kl">COMPANY HEDGE STATUS</div><div class="kv">—</div></div></div>''',unsafe_allow_html=True)
 
-risk,execute,curve,stress=st.tabs(["RISK","EXECUTE","CURVE","STRESS"])
+rho_tab,execute,curve,risk_tab=st.tabs(["RHO","EXECUTE","CURVE","RISK"])
 
-with risk:
+with rho_tab:
     a,b=st.columns([1.45,1])
     a.date_input("Valuation",key="val")
     b.button("LOAD TEST",use_container_width=True,on_click=load_test)
@@ -221,7 +225,13 @@ with risk:
     if not st.session_state.buckets:
         st.markdown('<div class="muted">No rho buckets yet. Add one below or load the audited test case.</div>',unsafe_allow_html=True)
     for i,x in enumerate(st.session_state.buckets):
-        st.markdown(f'<div class="rowcard"><div><div class="rowmain">{html.escape(x["expiry"].strftime("%b %y").upper())}</div></div><div class="num">{money_short(x["rho"])}</div></div>',unsafe_allow_html=True)
+        c1,c2=st.columns([3.2,1.15])
+        c1.markdown(f'<div class="rowcard"><div><div class="rowmain">{html.escape(x["expiry"].strftime("%b %y").upper())}</div><div class="rowsub">{"HEDGE" if x.get("hedge",True) else "INTENTIONAL OPEN"}</div></div><div class="num">{money_short(x["rho"])}</div></div>',unsafe_allow_html=True)
+        hv=c2.checkbox("Hedge",value=bool(x.get("hedge",True)),key=f"h_{i}")
+        if hv != bool(x.get("hedge",True)):
+            st.session_state.buckets[i]["hedge"]=hv
+            st.session_state.result=None
+            st.rerun()
 
     with st.expander("＋  ADD / EDIT BUCKETS",expanded=False):
         st.caption("Fast input: paste one bucket per line, for example  Nov-26  -100000")
@@ -239,13 +249,13 @@ with risk:
         st.markdown('<div class="muted">Or edit buckets individually</div>',unsafe_allow_html=True)
         n=st.number_input("Number of buckets",1,20,max(1,len(st.session_state.buckets)),1,key="bucket_n")
         base=list(st.session_state.buckets)
-        while len(base)<n: base.append({"name":f"Bucket {len(base)+1}","expiry":st.session_state.val,"rho":0.0})
+        while len(base)<n: base.append({"name":f"Bucket {len(base)+1}","expiry":st.session_state.val,"rho":0.0,"hedge":True})
         base=base[:n]; edited=[]
         for i,x in enumerate(base):
             c1,c2=st.columns([1,1])
             exp=c1.date_input(f"Expiry {i+1}",value=x["expiry"],key=f"e_{i}")
             rho=c2.number_input(f"Rho {i+1}",value=float(x["rho"]),step=10000.0,key=f"r_{i}")
-            edited.append({"name":f"Bucket {i+1}","expiry":exp,"rho":rho})
+            edited.append({"name":f"Bucket {i+1}","expiry":exp,"rho":rho,"hedge":bool(x.get("hedge",True))})
         if st.button("SAVE BUCKETS",use_container_width=True):
             st.session_state.buckets=edited; st.session_state.result=None; st.rerun()
 
@@ -259,8 +269,25 @@ with risk:
     if st.button("CALCULATE EXACT HEDGE",type="primary",use_container_width=True):
         if not st.session_state.buckets: st.warning("Add at least one rho bucket.")
         else:
-            bs=[Bucket(x["name"],x["expiry"],float(x["rho"])) for x in st.session_state.buckets]
-            st.session_state.result=full_result(st.session_state.val,bs,assumptions=ass); st.rerun()
+            selected=[x for x in st.session_state.buckets if x.get("hedge",True)]
+            if not selected:
+                st.warning("Select at least one bucket for hedge.")
+            else:
+                bs=[Bucket(x["name"],x["expiry"],float(x["rho"])) for x in selected]
+                rr=full_result(st.session_state.val,bs,assumptions=ass)
+                total_rho=sum(float(x["rho"]) for x in st.session_state.buckets)
+                selected_rho=sum(float(x["rho"]) for x in selected)
+                open_rho=total_rho-selected_rho
+                rr["selected_company_rho"]=selected_rho
+                rr["selected_company_dv01"]=selected_rho/100.0
+                rr["total_company_rho"]=total_rho
+                rr["total_company_dv01"]=total_rho/100.0
+                rr["intentional_open_rho"]=open_rho
+                rr["intentional_open_dv01"]=open_rho/100.0
+                rr["selected_parallel_residual_dv01"]=float(rr["parallel_residual_dv01"])
+                rr["total_post_hedge_dv01"]=open_rho/100.0+float(rr["parallel_residual_dv01"])
+                st.session_state.result=rr
+                st.rerun()
 
     if r:
         df=pd.DataFrame({"Contract":r["contracts"],"Company":r["company"],"Hedge":[-q*25 for q in r["target"]]})
@@ -389,37 +416,37 @@ with curve:
             except Exception as e:
                 st.error(f'History error: {type(e).__name__}: {e}')
 
-with stress:
-    st.markdown('<div class="section">RISK AFTER EXACT HEDGE</div>',unsafe_allow_html=True)
+with risk_tab:
+    st.markdown('<div class="section">RISK AFTER HEDGE</div>',unsafe_allow_html=True)
     if not r:
         st.info("Calculate the company risk first.")
     else:
-        residual=float(r["parallel_residual_dv01"])
-        rho_status="€0/bp" if abs(residual)<0.005 else f"€{residual:,.1f}/bp"
-        status_class="good" if abs(residual)<0.005 else "bad"
+        open_rho=float(r.get("intentional_open_rho",0.0))
+        open_dv01=float(r.get("intentional_open_dv01",0.0))
+        rounding=float(r.get("selected_parallel_residual_dv01",r["parallel_residual_dv01"]))
+        total_post=float(r.get("total_post_hedge_dv01",open_dv01+rounding))
+        partial=abs(open_rho)>0.005
+        status="PARTIAL" if partial else "EXACT ✓"
+        sub="selected scope exact · intentional open remains" if partial else "full company rho selected"
         st.markdown(
             '<div class="kgrid">'
-            f'<div class="kpi"><div class="kl">EXACT RHO HEDGE</div><div class="kv {status_class}">{rho_status}</div><div class="rowsub">parallel residual DV01</div></div>'
-            '<div class="kpi"><div class="kl">HEDGE STATUS</div><div class="kv good">EXACT ✓</div><div class="rowsub">quarterly target reconciled</div></div>'
+            f'<div class="kpi"><div class="kl">HEDGE STATUS</div><div class="kv {"good" if not partial else ""}">{status}</div><div class="rowsub">{sub}</div></div>'
+            f'<div class="kpi"><div class="kl">INTENTIONAL OPEN</div><div class="kv">{money_short(open_rho)}</div><div class="rowsub">{money_short(open_dv01)}/bp</div></div>'
+            f'<div class="kpi"><div class="kl">SELECTED ROUNDING</div><div class="kv">{money_short(rounding)}/bp</div></div>'
+            f'<div class="kpi"><div class="kl">POST-HEDGE DV01</div><div class="kv">{money_short(total_post)}/bp</div></div>'
             '</div>',unsafe_allow_html=True
         )
+        st.markdown('<div class="section">PARALLEL MOVE · FIRST ORDER</div>',unsafe_allow_html=True)
+        scenarios=[-50,-25,-10,10,25,50]
+        sdf=pd.DataFrame({"Move (bp)":scenarios,"P&L €":[-total_post*x for x in scenarios]})
+        st.dataframe(sdf,use_container_width=True,hide_index=True)
+        st.caption("P&L = − post-hedge DV01 × rate move. Dit is alleen first-order parallel rho/DV01.")
         st.markdown(
             '<div class="order"><div class="orderhead"><span class="side">KNOWN LIMIT</span><span class="qty">RHO-ONLY DATA</span></div>'
-            '<div class="route">Curve / basis / timing risk cannot be quantified reliably</div>'
-            '<div class="rowsub">Expiry month + rho is sufficient for the agreed exact rho hedge, but not for a defensible post-hedge curve-loss estimate.</div></div>',
+            '<div class="route">Curve / basis / timing risk is niet betrouwbaar in euro’s te kwantificeren.</div>'
+            '<div class="rowsub">Rho per expiry is voldoende voor de afgesproken hedge, maar niet voor nonlinear repricing, rho drift of convexity.</div></div>',
             unsafe_allow_html=True
         )
-        st.markdown('<div class="section">WHAT ATLAS CAN PROVE</div>',unsafe_allow_html=True)
-        st.markdown(
-            '<div class="recon">'
-            '<div class="reconrow"><span>Parallel rho / DV01</span><span></span><span>HEDGED</span></div>'
-            '<div class="reconrow"><span>Exact quarterly target</span><span></span><span>VERIFIED</span></div>'
-            '<div class="reconrow"><span>Curve / basis / timing loss</span><span></span><span>NOT QUANTIFIED</span></div>'
-            '<div class="reconrow"><span>Rho drift / convexity</span><span></span><span>NOT AVAILABLE</span></div>'
-            '</div>',unsafe_allow_html=True
-        )
-        with st.expander("WHY NOT A € RISK NUMBER?"):
-            st.caption("The source system supplies only expiry month and rho. That is enough for the agreed rho/DV01 hedge. It does not identify the exact curve/underlying bucket or how rho changes after a rate move. ATLAS therefore does not invent a post-hedge curve-loss number. Add underlying/curve-bucket or shocked-rho/scenario-P&L data later to quantify those risks.")
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V5.7 · two full-curve measurement dates")
+st.caption("ATLAS RHO · Mobile V5.8 · hedge selection + risk")
