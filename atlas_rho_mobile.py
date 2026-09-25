@@ -233,4 +233,4 @@ with stress:
             st.caption("First-order residual DV01 after hedge. Parallel +/-50 and +/-100bp, Front +50, Back +50, Bear steepener and Bull flattener.")
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V4.1 · exact hedge engine")
+st.caption("ATLAS RHO · Mobile V4.2 · exact hedge engine")
