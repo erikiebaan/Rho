@@ -3,6 +3,7 @@ import re
 import html
 import pandas as pd
 import streamlit as st
+import altair as alt
 from atlas_rho_engine import Bucket, full_result, DEFAULT_EXECUTION
 from atlas_rho_stress import stress_results
 from atlas_rho_history import available_dates
@@ -32,6 +33,30 @@ def contract_label(v):
         except Exception: return z
     try: return pd.to_datetime(z).strftime("%b-%y")
     except Exception: return z
+
+
+def curve_compare_chart(wide, visible):
+    z=wide.reset_index().melt(id_vars="contract",value_vars=visible,var_name="Horizon",value_name="Rate")
+    z=z.dropna(subset=["Rate"])
+    order=list(wide.index)
+    domain=["NOW","+1W","+1M","+3M","+6M"]
+    colors=["#d8ff32","#79b8ff","#3f86ff","#ff6b6b","#ffb0b0"]
+    ymin=float(z["Rate"].min()); ymax=float(z["Rate"].max())
+    pad=max((ymax-ymin)*0.22,0.08)
+    line=alt.Chart(z).mark_line(point=True).encode(
+        x=alt.X("contract:N",sort=order,title=None,axis=alt.Axis(labelAngle=-45)),
+        y=alt.Y("Rate:Q",title="Implied rate %",scale=alt.Scale(domain=[ymin-pad,ymax+pad],zero=False)),
+        color=alt.Color("Horizon:N",scale=alt.Scale(domain=domain,range=colors),legend=None),
+        strokeWidth=alt.condition(alt.datum.Horizon=="NOW",alt.value(4),alt.value(2.2)),
+        tooltip=["contract:N","Horizon:N",alt.Tooltip("Rate:Q",format=".3f")]
+    )
+    last=z.groupby("Horizon",as_index=False).tail(1)
+    labels=alt.Chart(last).mark_text(align="left",dx=8,fontSize=12,fontWeight="bold").encode(
+        x=alt.X("contract:N",sort=order),y="Rate:Q",
+        text="Horizon:N",color=alt.Color("Horizon:N",scale=alt.Scale(domain=domain,range=colors),legend=None))
+    return (line+labels).properties(height=330).configure_view(strokeOpacity=0).configure_axis(
+        gridColor="#252b33",domainColor="#4a515c",tickColor="#4a515c",labelColor="#aeb5bf",titleColor="#aeb5bf"
+    )
 
 def history_comparison(df, selected_date):
     dates=available_dates(df)
@@ -256,15 +281,29 @@ with curve:
                             wide=one if wide is None else wide.join(one,how='outer')
                         else:
                             labels.append(f'{label} · N/A')
-                    st.caption('  |  '.join(labels))
-                    if wide is not None:
-                        st.line_chart(wide,use_container_width=True)
+                    available=[x for x in wanted if wide is not None and x in wide.columns]
+                    if wide is not None and available:
+                        start_date=comp["NOW"]["actual_date"].iloc[0].date() if "NOW" in comp else None
+                        st.markdown('<div class="section">COMPARE HORIZONS</div>',unsafe_allow_html=True)
+                        visible=st.multiselect("Periods",available,default=available,key="history_periods",label_visibility="collapsed")
+                        if not visible: visible=["NOW"] if "NOW" in available else [available[0]]
+                        base=wide["NOW"] if "NOW" in wide.columns else wide[available[0]]
+                        cards=[]
+                        for lab in ["+1W","+1M","+3M","+6M"]:
+                            if lab in wide.columns:
+                                common=pd.concat([base,wide[lab]],axis=1).dropna()
+                                delta=(common.iloc[:,-1]-common.iloc[:,0]).mean()*100 if not common.empty else float("nan")
+                                d=comp[lab]["actual_date"].iloc[0].date()
+                                cards.append(f'<div class="kpi"><div class="kl">{lab} · {d.strftime("%d %b %y").upper()}</div><div class="kv">{delta:+.1f} bp</div><div class="rowsub">avg vs start curve</div></div>')
+                        if cards: st.markdown('<div class="kgrid">'+''.join(cards)+'</div>',unsafe_allow_html=True)
+                        if start_date: st.caption(f'START · {start_date.strftime("%d %b %Y").upper()}  →  realized curve comparison')
+                        st.altair_chart(curve_compare_chart(wide,visible),use_container_width=True)
                         display=wide.reset_index()
                         for label in wanted:
                             if label not in display.columns: display[label]="N/A"
                         with st.expander('HISTORY TABLE'):
                             st.dataframe(display[['contract']+wanted],use_container_width=True,hide_index=True)
-                    st.caption('Only realized horizons with enough later trading days are shown. 5 / 21 / 63 / 126 trading days = 1W / 1M / 3M / 6M. N/A means that future history is not yet available.')
+                    st.caption('Realized history only. 5 / 21 / 63 / 126 trading days = 1W / 1M / 3M / 6M. N/A means that horizon is not yet available.')
             except Exception as e:
                 try:
                     _dbg=pd.read_csv('atlas_euribor_history.csv',nrows=2)
@@ -290,4 +329,4 @@ with stress:
             st.caption("First-order residual DV01 after hedge. Parallel +/-50 and +/-100bp, Front +50, Back +50, Bear steepener and Bull flattener.")
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V4.4 · exact hedge engine")
+st.caption("ATLAS RHO · Mobile V4.5 · exact hedge engine")
