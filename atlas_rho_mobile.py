@@ -146,9 +146,40 @@ with execute:
             st.dataframe(pd.DataFrame({"Contract":r["contracts"],"DV01":r["company"],"Target":r["target"],"Current":r["current"],"Trade":r["trade"]}),use_container_width=True,hide_index=True)
 
 with curve:
-    st.markdown('<div class="section">EURIBOR CURVE</div>',unsafe_allow_html=True)
-    st.markdown('<div class="muted">Market curve is intentionally not simulated. The real historical EURIBOR database will drive NOW · HISTORY · +1W · +1M · +3M · +6M.</div>',unsafe_allow_html=True)
-    st.info("Curve data connection pending. No DV01 data is shown as a fake market curve.")
+    st.subheader('EURIBOR CURVE')
+    st.caption('Real market data only. Upload a current Euribor futures strip; no synthetic curve is generated.')
+    cu=st.file_uploader('EURIBOR CURVE CSV',type=['csv'],key='curve_csv')
+    if cu is None:
+        st.info('Upload CSV with contract or expiry plus close, price, last, settle or settlement.')
+    else:
+        try:
+            cdf=pd.read_csv(cu)
+            cmap={str(c).strip().lower():c for c in cdf.columns}
+            pcol=next((cmap[k] for k in ('close','price','last','settle','settlement') if k in cmap),None)
+            xcol=next((cmap[k] for k in ('contract','expiry','maturity') if k in cmap),None)
+            if pcol is None or xcol is None:
+                st.error('CSV needs contract/expiry and price/close/last/settle columns.')
+            else:
+                plot=cdf[[xcol,pcol]].copy()
+                plot[pcol]=pd.to_numeric(plot[pcol],errors='coerce')
+                plot=plot.dropna(subset=[pcol]).drop_duplicates(subset=[xcol],keep='last')
+                plot['Implied rate %']=100.0-plot[pcol]
+                if plot.empty:
+                    st.error('No valid futures prices found.')
+                else:
+                    front=float(plot['Implied rate %'].iloc[0])
+                    back=float(plot['Implied rate %'].iloc[-1])
+                    slope=(back-front)*100.0
+                    shape='UPWARD' if slope>5 else 'DOWNWARD' if slope<-5 else 'FLAT'
+                    c1,c2=st.columns(2)
+                    c1.metric('Front rate',f'{front:.3f}%')
+                    c2.metric('Curve shape',shape,f'{slope:+.1f} bp')
+                    st.line_chart(plot[[xcol,'Implied rate %']].set_index(xcol),use_container_width=True)
+                    with st.expander('CURVE TABLE'):
+                        st.dataframe(plot[[xcol,pcol,'Implied rate %']],use_container_width=True,hide_index=True)
+                    st.caption('Implied rate = 100 - futures price. Descriptive curve shape only; not an ECB forecast.')
+        except Exception as e:
+            st.error(f'Could not read curve CSV: {e}')
 
 with stress:
     st.markdown('<div class="section">STRESS LAB</div>',unsafe_allow_html=True)
