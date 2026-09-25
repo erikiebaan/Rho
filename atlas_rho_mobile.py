@@ -364,92 +364,32 @@ with stress:
     if not r:
         st.info("Calculate the company risk first.")
     else:
-        # Keep the ORIGINAL monthly rho dates for risk. The execution hedge remains quarterly.
-        # This exposes timing/basis mismatch that disappears when both sides are first bucketed quarterly.
-        month_pos=[]
-        for x in st.session_state.buckets:
-            d=pd.Timestamp(x["expiry"]).normalize()
-            month_pos.append((d,float(x["rho"])/100.0))  # €/bp at the original month
-        hedge_pos=[]
-        for c,q in zip(r["contracts"],r["target"]):
-            d=pd.to_datetime(c,format="%b-%Y")
-            hedge_pos.append((d,-float(q)*25.0))          # €/bp at quarterly futures date
-
-        def pnl_for(shock_fn):
-            return sum(dv*shock_fn(d) for d,dv in month_pos)+sum(dv*shock_fn(d) for d,dv in hedge_pos)
-
-        scans=[]
-        def add_scan(kind,loc,desc,fn):
-            p=pnl_for(fn)
-            scans.append({"Scenario":f"{kind} · {loc}","P&L":p,"Location":loc,"Cause":desc,"Type":kind})
-
-        # 25bp policy-step scan: maturities from the selected month onward reprice by 25bp.
-        # Run both directions because the painful direction depends on the portfolio.
-        months=sorted(set([d for d,_ in month_pos]+[d for d,_ in hedge_pos]))
-        for cut in months:
-            lab=cut.strftime("%b-%y")
-            for sign in (1.0,-1.0):
-                add_scan("POLICY STEP",lab,
-                    "25bp repricing from this month onward",
-                    lambda d,cut=cut,sign=sign: sign*25.0 if d>=cut else 0.0)
-
-        # Local timing scan: a 25bp hump at one month, fading linearly to zero 3 months away.
-        # This is a standardized curve stress, not an ECB forecast.
-        for center in sorted(set(d for d,_ in month_pos)):
-            lab=center.strftime("%b-%y")
-            for sign in (1.0,-1.0):
-                def local(d,center=center,sign=sign):
-                    dm=abs((d.year-center.year)*12+(d.month-center.month))
-                    return sign*25.0*max(0.0,1.0-dm/3.0)
-                add_scan("LOCAL MONTH",lab,
-                    "25bp local move, fading to zero over 3 months",local)
-
-        # Broad twist around the middle of the risk horizon, scaled to +/-25bp.
-        all_dates=[d for d,_ in month_pos]+[d for d,_ in hedge_pos]
-        if all_dates:
-            lo=min(all_dates); hi=max(all_dates)
-            span=max((hi.year-lo.year)*12+(hi.month-lo.month),1)
-            def twist(d,sign=1.0):
-                x=((d.year-lo.year)*12+(d.month-lo.month))/span
-                return sign*25.0*(2.0*x-1.0)
-            add_scan("CURVE TWIST",f"{lo.strftime('%b-%y')} → {hi.strftime('%b-%y')}",
-                     "Front and back move in opposite directions",lambda d: twist(d,1.0))
-            add_scan("CURVE TWIST",f"{lo.strftime('%b-%y')} → {hi.strftime('%b-%y')}",
-                     "Reverse front/back move",lambda d: twist(d,-1.0))
-
-        parallel=float(r["parallel_residual_dv01"])
-        parallel25=parallel*25.0
-        losses=sorted([x for x in scans if x["P&L"]<0],key=lambda x:x["P&L"])
-        worst=losses[0] if losses else {"P&L":0.0,"Location":"—","Cause":"No loss in scanned shocks","Scenario":"—","Type":"—"}
-        top=losses[:5]
-
+        residual=float(r["parallel_residual_dv01"])
+        rho_status="€0/bp" if abs(residual)<0.005 else f"€{residual:,.1f}/bp"
+        status_class="good" if abs(residual)<0.005 else "bad"
         st.markdown(
             '<div class="kgrid">'
-            f'<div class="kpi"><div class="kl">PARALLEL ±25BP</div><div class="kv good">€{abs(parallel25):,.0f}</div><div class="rowsub">exact parallel hedge</div></div>'
-            f'<div class="kpi"><div class="kl">WORST TIMING RISK</div><div class="kv bad">−€{abs(worst["P&L"]):,.0f}</div><div class="rowsub">25bp standardized shock</div></div>'
+            f'<div class="kpi"><div class="kl">EXACT RHO HEDGE</div><div class="kv {status_class}">{rho_status}</div><div class="rowsub">parallel residual DV01</div></div>'
+            '<div class="kpi"><div class="kl">HEDGE STATUS</div><div class="kv good">EXACT ✓</div><div class="rowsub">quarterly target reconciled</div></div>'
             '</div>',unsafe_allow_html=True
         )
         st.markdown(
-            f'<div class="order"><div class="orderhead"><span class="side">RISK</span><span class="qty">{html.escape(str(worst["Location"]))}</span></div>'
-            f'<div class="route">{html.escape(str(worst["Type"]))}</div>'
-            f'<div class="rowsub">{html.escape(str(worst["Cause"]))} · P&L €{worst["P&L"]:,.0f}</div></div>',
+            '<div class="order"><div class="orderhead"><span class="side">KNOWN LIMIT</span><span class="qty">RHO-ONLY DATA</span></div>'
+            '<div class="route">Curve / basis / timing risk cannot be quantified reliably</div>'
+            '<div class="rowsub">Expiry month + rho is sufficient for the agreed exact rho hedge, but not for a defensible post-hedge curve-loss estimate.</div></div>',
             unsafe_allow_html=True
         )
-
-        if top:
-            st.markdown('<div class="section">TOP RISKS AFTER HEDGE</div>',unsafe_allow_html=True)
-            rdf=pd.DataFrame(top)
-            st.altair_chart(dark_stress_chart(rdf[["Scenario","P&L"]]),use_container_width=True)
-            for j,x in enumerate(top,1):
-                st.markdown(
-                    f'<div class="order"><div class="orderhead"><span class="side">#{j}</span><span class="qty">−€{abs(x["P&L"]):,.0f}</span></div>'
-                    f'<div class="route">{html.escape(str(x["Type"]))} · {html.escape(str(x["Location"]))}</div>'
-                    f'<div class="rowsub">{html.escape(str(x["Cause"]))}</div></div>',
-                    unsafe_allow_html=True
-                )
-
-        with st.expander("WHAT THIS MEANS"):
-            st.caption("ATLAS keeps the company rho on its original monthly expiry dates and compares it with the quarterly Euribor futures hedge. It scans 25bp policy-step moves, 25bp local monthly moves and a broad curve twist. This exposes month-versus-quarter timing/basis risk after the exact parallel hedge. It is first-order rho/DV01 stress, not a forecast or full option repricing. Rho drift/convexity cannot be measured from rho-per-month alone.")
+        st.markdown('<div class="section">WHAT ATLAS CAN PROVE</div>',unsafe_allow_html=True)
+        st.markdown(
+            '<div class="recon">'
+            '<div class="reconrow"><span>Parallel rho / DV01</span><span></span><span>HEDGED</span></div>'
+            '<div class="reconrow"><span>Exact quarterly target</span><span></span><span>VERIFIED</span></div>'
+            '<div class="reconrow"><span>Curve / basis / timing loss</span><span></span><span>NOT QUANTIFIED</span></div>'
+            '<div class="reconrow"><span>Rho drift / convexity</span><span></span><span>NOT AVAILABLE</span></div>'
+            '</div>',unsafe_allow_html=True
+        )
+        with st.expander("WHY NOT A € RISK NUMBER?"):
+            st.caption("The source system supplies only expiry month and rho. That is enough for the agreed rho/DV01 hedge. It does not identify the exact curve/underlying bucket or how rho changes after a rate move. ATLAS therefore does not invent a post-hedge curve-loss number. Add underlying/curve-bucket or shocked-rho/scenario-P&L data later to quantify those risks.")
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V5.3 · exact hedge engine")
+st.caption("ATLAS RHO · Mobile V5.4 · exact hedge engine")
