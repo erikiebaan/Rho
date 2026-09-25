@@ -148,7 +148,7 @@ with execute:
 
 with curve:
     st.subheader('EURIBOR CURVE')
-    mode=st.radio('MODE',['CURRENT','HISTORY'],horizontal=True,label_visibility='collapsed')
+    mode=st.selectbox('CURVE VIEW',['CURRENT','HISTORY'],key='curve_view')
     if mode=='CURRENT':
         st.caption('Real market data only. Upload a current Euribor futures strip; no synthetic curve is generated.')
         cu=st.file_uploader('EURIBOR CURVE CSV',type=['csv'],key='curve_csv')
