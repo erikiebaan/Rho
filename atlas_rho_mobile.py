@@ -8,6 +8,27 @@ from atlas_rho_engine import Bucket, full_result, DEFAULT_EXECUTION
 from atlas_rho_stress import stress_results
 from atlas_rho_history import available_dates
 
+def parse_rho_paste(raw):
+    months={"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,"jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12,
+            "mei":5,"okt":10}
+    out=[]; bad=[]
+    for line in raw.splitlines():
+        line=line.strip()
+        if not line: continue
+        m=re.match(r"^([A-Za-z]{3})[- /](\d{2,4})\s+([+\-]?[\d.,]+)\s*$",line)
+        if not m or m.group(1).lower() not in months:
+            bad.append(line); continue
+        mon=months[m.group(1).lower()]
+        y=int(m.group(2)); y=2000+y if y<100 else y
+        num=m.group(3).replace(" ","")
+        if "," in num and "." in num: num=num.replace(".","").replace(",",".")
+        elif "," in num: num=num.replace(",",".")
+        try: rho=float(num)
+        except ValueError:
+            bad.append(line); continue
+        out.append({"name":f"{m.group(1).title()} {str(y)[-2:]}","expiry":date(y,mon,1),"rho":rho})
+    return out,bad
+
 def normalize_history(df):
     x=df.copy()
     cols={str(c).strip().lower():c for c in x.columns}
@@ -203,6 +224,19 @@ with risk:
         st.markdown(f'<div class="rowcard"><div><div class="rowmain">{html.escape(x["expiry"].strftime("%b %y").upper())}</div></div><div class="num">{money_short(x["rho"])}</div></div>',unsafe_allow_html=True)
 
     with st.expander("＋  ADD / EDIT BUCKETS",expanded=False):
+        st.caption("Fast input: paste one bucket per line, for example  Nov-26  -100000")
+        raw=st.text_area("PASTE RHO",height=150,placeholder="Nov-26   -100000\nJan-27   -150000\nJun-27   -400000",key="rho_paste")
+        if st.button("IMPORT PASTED RHO",use_container_width=True):
+            parsed,bad=parse_rho_paste(raw)
+            if bad:
+                st.error("Could not read: " + " | ".join(bad))
+            elif not parsed:
+                st.warning("Paste at least one expiry and rho amount.")
+            else:
+                st.session_state.buckets=parsed
+                st.session_state.result=None
+                st.rerun()
+        st.markdown('<div class="muted">Or edit buckets individually</div>',unsafe_allow_html=True)
         n=st.number_input("Number of buckets",1,20,max(1,len(st.session_state.buckets)),1,key="bucket_n")
         base=list(st.session_state.buckets)
         while len(base)<n: base.append({"name":f"Bucket {len(base)+1}","expiry":st.session_state.val,"rho":0.0})
@@ -392,4 +426,4 @@ with stress:
             st.caption("The source system supplies only expiry month and rho. That is enough for the agreed rho/DV01 hedge. It does not identify the exact curve/underlying bucket or how rho changes after a rate move. ATLAS therefore does not invent a post-hedge curve-loss number. Add underlying/curve-bucket or shocked-rho/scenario-P&L data later to quantify those risks.")
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V5.4 · exact hedge engine")
+st.caption("ATLAS RHO · Mobile V5.5 · exact hedge engine")
