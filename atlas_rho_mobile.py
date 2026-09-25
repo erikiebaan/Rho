@@ -4,7 +4,22 @@ import pandas as pd
 import streamlit as st
 from atlas_rho_engine import Bucket, full_result, DEFAULT_EXECUTION
 from atlas_rho_stress import stress_results
-from atlas_rho_history import normalize_history, available_dates, comparison
+from atlas_rho_history import available_dates, comparison
+
+def normalize_history(df):
+    x=df.copy()
+    cols={str(c).strip().lower():c for c in x.columns}
+    d=next((cols[k] for k in ("date","trade_date","day") if k in cols),None)
+    p=next((cols[k] for k in ("close","price","last","settle","settlement") if k in cols),None)
+    m=next((cols[k] for k in ("requested_expiry","contract","expiry","maturity","local_symbol") if k in cols),None)
+    if d is None or p is None or m is None:
+        raise ValueError(f"History columns not recognised: {list(x.columns)}")
+    x=x[[d,m,p]].rename(columns={d:"date",m:"contract",p:"price"})
+    x["date"]=pd.to_datetime(x["date"],errors="coerce").dt.normalize()
+    x["price"]=pd.to_numeric(x["price"],errors="coerce")
+    x=x.dropna().drop_duplicates(["date","contract"],keep="last").sort_values(["date","contract"])
+    x["implied_rate"]=100.0-x["price"]
+    return x
 
 st.set_page_config(page_title="ATLAS RHO",page_icon="◼",layout="centered",initial_sidebar_state="collapsed")
 
@@ -233,4 +248,4 @@ with stress:
             st.caption("First-order residual DV01 after hedge. Parallel +/-50 and +/-100bp, Front +50, Back +50, Bear steepener and Bull flattener.")
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V4.2 · exact hedge engine")
+st.caption("ATLAS RHO · Mobile V4.3 · exact hedge engine")
