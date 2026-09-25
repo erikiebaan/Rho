@@ -150,13 +150,20 @@ with curve:
     st.subheader('EURIBOR CURVE')
     mode=st.selectbox('CURVE VIEW',['NOW','HISTORY'],key='curve_view')
     if mode=='NOW':
-        st.caption('NOW = latest available Euribor futures curve. No synthetic curve is generated.')
-        cu=st.file_uploader('EURIBOR CURVE CSV',type=['csv'],key='curve_csv')
+        st.caption('NOW = latest available Euribor futures curve from the built-in ATLAS database.')
+        cu=None
+        try:
+            _h=normalize_history(pd.read_csv('atlas_euribor_history.csv'))
+            _d=available_dates(_h)[-1]
+            _z=_h[_h['date']==_d][['contract','price']].rename(columns={'price':'close'})
+            cu=_z
+        except Exception:
+            pass
         if cu is None:
             st.info('Load the latest Euribor curve to show NOW. The screen will use the most recent available market date.')
         else:
             try:
-                cdf=pd.read_csv(cu)
+                cdf=cu.copy() if isinstance(cu,pd.DataFrame) else pd.read_csv(cu)
                 cmap={str(c).strip().lower():c for c in cdf.columns}
                 pcol=next((cmap[k] for k in ('close','price','last','settle','settlement') if k in cmap),None)
                 xcol=next((cmap[k] for k in ('contract','expiry','maturity') if k in cmap),None)
@@ -179,12 +186,15 @@ with curve:
             except Exception as e: st.error(f'Could not read curve CSV: {e}')
     else:
         st.caption('Choose a historical date and compare the realized curve after 1 week, 1 month, 3 months and 6 months.')
-        hu=st.file_uploader('EURIBOR HISTORY CSV',type=['csv'],key='history_csv')
+        try:
+            hu=pd.read_csv('atlas_euribor_history.csv')
+        except Exception:
+            hu=None
         if hu is None:
-            st.info('Upload historical CSV with date, contract/expiry and close/price/settle.')
+            st.error('Built-in history database not found.')
         else:
             try:
-                hist=normalize_history(pd.read_csv(hu)); dates=available_dates(hist)
+                hist=normalize_history(hu); dates=available_dates(hist)
                 if not dates: st.error('No valid history dates found.')
                 else:
                     hd=st.date_input('Historical date',value=dates[-1].date(),min_value=dates[0].date(),max_value=dates[-1].date(),key='history_date')
