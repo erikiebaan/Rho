@@ -3,6 +3,7 @@ import html
 import pandas as pd
 import streamlit as st
 from atlas_rho_engine import Bucket, full_result, DEFAULT_EXECUTION
+from atlas_rho_stress import stress_results
 
 st.set_page_config(page_title="ATLAS RHO",page_icon="◼",layout="centered",initial_sidebar_state="collapsed")
 
@@ -160,7 +161,11 @@ with stress:
         else:
             sdf=pd.DataFrame({"Scenario":["−100bp","−50bp","+50bp","+100bp"],"P&L":vals})
             st.bar_chart(sdf.set_index("Scenario"),use_container_width=True)
-        st.markdown('<div class="muted" style="margin-top:12px">Front · Back · Bear Steepener · Bull Flattener will be connected from the full desktop stress specification.</div>',unsafe_allow_html=True)
+        sr=stress_results(r["company"],r["target"])
+        sdf=pd.DataFrame({"Scenario":list(sr["scenarios"].keys()),"P&L":list(sr["scenarios"].values())})
+        st.bar_chart(sdf.set_index("Scenario"),use_container_width=True)
+        with st.expander("SCENARIO DEFINITIONS"):
+            st.caption("First-order residual DV01 after hedge. Parallel +/-50 and +/-100bp, Front +50, Back +50, Bear steepener and Bull flattener.")
 
 st.markdown("---")
 st.caption("ATLAS RHO · Mobile V3 · exact hedge engine")
