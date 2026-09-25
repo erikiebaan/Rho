@@ -252,7 +252,15 @@ with execute:
                 st.markdown(f'<div class="order"><div class="orderhead"><span class="side">{side}</span><span class="qty">{abs(q)} · {html.escape(name.upper())}</span></div><div class="route">{html.escape(route)}</div></div>',unsafe_allow_html=True)
         else: st.success("No trade required.")
         with st.expander("QUARTERLY RECONCILIATION"):
-            st.dataframe(pd.DataFrame({"Contract":r["contracts"],"Target":r["target"],"Trade":r["trade"]}),use_container_width=True,hide_index=True)
+            rec=pd.DataFrame({"Contract":r["contracts"],"Target":r["target"],"Trade":r["trade"]})
+            rows="".join(
+                f'<div class="reconrow"><span>{html.escape(str(x.Contract))}</span><span>{int(x.Target):+d}</span><span>{int(x.Trade):+d}</span></div>'
+                for x in rec.itertuples(index=False)
+            )
+            st.markdown(
+                '<div class="recon"><div class="reconhead"><span>CONTRACT</span><span>TARGET</span><span>TRADE</span></div>'+rows+'</div>',
+                unsafe_allow_html=True
+            )
 
 with curve:
     st.subheader('EURIBOR CURVE')
@@ -369,4 +377,4 @@ with stress:
             st.caption("First-order residual DV01 after hedge. Parallel +/-50 and +/-100bp, Front +50, Back +50, Bear steepener and Bull flattener.")
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V5.0 · exact hedge engine")
+st.caption("ATLAS RHO · Mobile V5.1 · exact hedge engine")
