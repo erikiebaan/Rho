@@ -1,10 +1,11 @@
 from datetime import date
+import re
 import html
 import pandas as pd
 import streamlit as st
 from atlas_rho_engine import Bucket, full_result, DEFAULT_EXECUTION
 from atlas_rho_stress import stress_results
-from atlas_rho_history import available_dates, comparison
+from atlas_rho_history import available_dates
 
 def normalize_history(df):
     x=df.copy()
@@ -20,6 +21,33 @@ def normalize_history(df):
     x=x.dropna().drop_duplicates(["date","contract"],keep="last").sort_values(["date","contract"])
     x["implied_rate"]=100.0-x["price"]
     return x
+
+
+
+def contract_label(v):
+    z=str(v).strip()
+    m=re.fullmatch(r"(\\d{4})(\\d{2})",z)
+    if m:
+        try: return pd.Timestamp(int(m.group(1)),int(m.group(2)),1).strftime("%b-%y")
+        except Exception: return z
+    try: return pd.to_datetime(z).strftime("%b-%y")
+    except Exception: return z
+
+def history_comparison(df, selected_date):
+    dates=available_dates(df)
+    if not dates: return {}
+    target=pd.Timestamp(selected_date).normalize()
+    base=min(dates,key=lambda d:abs((d-target).days))
+    i=dates.index(base)
+    out={}
+    for label,offset in {"NOW":0,"+1W":5,"+1M":21,"+3M":63,"+6M":126}.items():
+        j=i+offset
+        if j>=len(dates): continue
+        d=dates[j]
+        z=df[df["date"]==d][["contract","implied_rate"]].copy()
+        z["actual_date"]=d
+        out[label]=z
+    return out
 
 st.set_page_config(page_title="ATLAS RHO",page_icon="◼",layout="centered",initial_sidebar_state="collapsed")
 
@@ -195,7 +223,9 @@ with curve:
                         front=float(plot['Implied rate %'].iloc[0]); back=float(plot['Implied rate %'].iloc[-1]); slope=(back-front)*100.0
                         shape='UPWARD' if slope>5 else 'DOWNWARD' if slope<-5 else 'FLAT'
                         c1,c2=st.columns(2); c1.metric('Front rate',f'{front:.3f}%'); c2.metric('Curve shape',shape,f'{slope:+.1f} bp')
-                        st.line_chart(plot[[xcol,'Implied rate %']].set_index(xcol),use_container_width=True)
+                        p2=plot[[xcol,'Implied rate %']].copy()
+                        p2[xcol]=p2[xcol].map(contract_label)
+                        st.line_chart(p2.set_index(xcol),use_container_width=True)
                         with st.expander('CURVE TABLE'): st.dataframe(plot[[xcol,pcol,'Implied rate %']],use_container_width=True,hide_index=True)
                         st.caption('Implied rate = 100 - futures price. Descriptive curve shape only; not an ECB forecast.')
             except Exception as e: st.error(f'Could not read curve CSV: {e}')
@@ -213,16 +243,28 @@ with curve:
                 if not dates: st.error('No valid history dates found.')
                 else:
                     hd=st.date_input('Historical date',value=dates[-1].date(),min_value=dates[0].date(),max_value=dates[-1].date(),key='history_date')
-                    comp=comparison(hist,hd)
+                    comp=history_comparison(hist,hd)
                     wide=None; labels=[]
-                    for label,z in comp.items():
-                        d=z['actual_date'].iloc[0].date(); labels.append(f'{label} · {d}')
-                        one=z[['contract','implied_rate']].rename(columns={'implied_rate':label}).set_index('contract')
-                        wide=one if wide is None else wide.join(one,how='outer')
+                    wanted=["NOW","+1W","+1M","+3M","+6M"]
+                    for label in wanted:
+                        if label in comp:
+                            z=comp[label]
+                            d=z['actual_date'].iloc[0].date(); labels.append(f'{label} · {d}')
+                            one=z[['contract','implied_rate']].copy()
+                            one['contract']=one['contract'].map(contract_label)
+                            one=one.rename(columns={'implied_rate':label}).set_index('contract')
+                            wide=one if wide is None else wide.join(one,how='outer')
+                        else:
+                            labels.append(f'{label} · N/A')
                     st.caption('  |  '.join(labels))
-                    st.line_chart(wide,use_container_width=True)
-                    with st.expander('HISTORY TABLE'): st.dataframe(wide.reset_index(),use_container_width=True,hide_index=True)
-                    st.caption('Forward horizons use 5 / 21 / 63 / 126 available trading days. This shows realized history, not a forecast.')
+                    if wide is not None:
+                        st.line_chart(wide,use_container_width=True)
+                        display=wide.reset_index()
+                        for label in wanted:
+                            if label not in display.columns: display[label]="N/A"
+                        with st.expander('HISTORY TABLE'):
+                            st.dataframe(display[['contract']+wanted],use_container_width=True,hide_index=True)
+                    st.caption('Only realized horizons with enough later trading days are shown. 5 / 21 / 63 / 126 trading days = 1W / 1M / 3M / 6M. N/A means that future history is not yet available.')
             except Exception as e:
                 try:
                     _dbg=pd.read_csv('atlas_euribor_history.csv',nrows=2)
@@ -248,4 +290,4 @@ with stress:
             st.caption("First-order residual DV01 after hedge. Parallel +/-50 and +/-100bp, Front +50, Back +50, Bear steepener and Bull flattener.")
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V4.3 · exact hedge engine")
+st.caption("ATLAS RHO · Mobile V4.4 · exact hedge engine")
