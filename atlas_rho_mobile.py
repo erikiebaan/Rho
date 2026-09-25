@@ -208,7 +208,7 @@ with curve:
                     st.line_chart(wide,use_container_width=True)
                     with st.expander('HISTORY TABLE'): st.dataframe(wide.reset_index(),use_container_width=True,hide_index=True)
                     st.caption('Forward horizons use 5 / 21 / 63 / 126 available trading days. This shows realized history, not a forecast.')
-            except Exception as e: st.error(f'Could not read history CSV: {e}')
+            except Exception as e:\n                try:\n                    _dbg=pd.read_csv('atlas_euribor_history.csv',nrows=2)\n                    st.error(f'History debug | columns={list(_dbg.columns)} | error={type(e).__name__}: {e}')\n                except Exception as _e:\n                    st.error(f'History file debug failed: {type(_e).__name__}: {_e}')
 
 with stress:
     st.markdown('<div class="section">STRESS LAB</div>',unsafe_allow_html=True)
