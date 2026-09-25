@@ -54,7 +54,7 @@ def curve_compare_chart(wide, visible):
     labels=alt.Chart(last).mark_text(align="left",dx=8,fontSize=12,fontWeight="bold").encode(
         x=alt.X("contract:N",sort=order),y="Rate:Q",
         text="Horizon:N",color=alt.Color("Horizon:N",scale=alt.Scale(domain=domain,range=colors),legend=None))
-    return (line+labels).properties(height=330).configure_view(strokeOpacity=0).configure_axis(
+    return (line+labels).properties(height=330,background="#080a0d").configure_view(strokeOpacity=0,fill="#080a0d").configure_axis(
         gridColor="#252b33",domainColor="#4a515c",tickColor="#4a515c",labelColor="#aeb5bf",titleColor="#aeb5bf"
     )
 
@@ -69,7 +69,7 @@ def dark_line_chart(df, xcol, ycols, height=330):
         y=alt.Y("Value:Q",title="Implied rate %",scale=alt.Scale(domain=[ymin-pad,ymax+pad],zero=False)),
         color=alt.Color("Series:N",scale=alt.Scale(domain=domain,range=colors),legend=None),
         tooltip=[alt.Tooltip(f"{xcol}:N"),"Series:N",alt.Tooltip("Value:Q",format=".3f")]
-    ).properties(height=height).configure_view(strokeOpacity=0).configure_axis(
+    ).properties(height=height,background="#080a0d").configure_view(strokeOpacity=0,fill="#080a0d").configure_axis(
         gridColor="#252b33",domainColor="#4a515c",tickColor="#4a515c",
         labelColor="#aeb5bf",titleColor="#aeb5bf"
     )
@@ -84,7 +84,7 @@ def dark_stress_chart(df):
         y=alt.Y("P&L:Q",title="P&L €",scale=alt.Scale(domain=[min(0,ymin)-pad,max(0,ymax)+pad],zero=True)),
         color=alt.condition(alt.datum["P&L"]>=0,alt.value("#d8ff32"),alt.value("#ff5d62")),
         tooltip=["Scenario:N",alt.Tooltip("P&L:Q",format=",.0f",title="P&L €")]
-    ).properties(height=300).configure_view(strokeOpacity=0).configure_axis(
+    ).properties(height=300,background="#080a0d").configure_view(strokeOpacity=0,fill="#080a0d").configure_axis(
         gridColor="#252b33",domainColor="#4a515c",tickColor="#4a515c",
         labelColor="#aeb5bf",titleColor="#aeb5bf"
     )
@@ -212,7 +212,7 @@ with risk:
             exp=c1.date_input(f"Expiry {i+1}",value=x["expiry"],key=f"e_{i}")
             rho=c2.number_input(f"Rho {i+1}",value=float(x["rho"]),step=10000.0,key=f"r_{i}")
             edited.append({"name":f"Bucket {i+1}","expiry":exp,"rho":rho})
-        if st.button("SAVE BUCKETS",use_container_width=True):
+        if st.button("SAVE BUCKETS",use_container_width=True,theme=None):
             st.session_state.buckets=edited; st.session_state.result=None; st.rerun()
 
     with st.expander("⚙  EXECUTION ASSUMPTIONS"):
@@ -222,7 +222,7 @@ with risk:
         ass["pack_spread_bp"]=c2.number_input("Pack bp",0.0,20.0,.5,.125)
         for y,v in {2:.5,3:.625,4:.625,5:.625,6:.625}.items():
             ass[f"bundle_{y}y_spread_bp"]=st.number_input(f"{y}Y Bundle bp",0.0,20.0,v,.125,key=f"bundle_{y}")
-    if st.button("CALCULATE EXACT HEDGE",type="primary",use_container_width=True):
+    if st.button("CALCULATE EXACT HEDGE",type="primary",use_container_width=True,theme=None):
         if not st.session_state.buckets: st.warning("Add at least one rho bucket.")
         else:
             bs=[Bucket(x["name"],x["expiry"],float(x["rho"])) for x in st.session_state.buckets]
@@ -231,7 +231,7 @@ with risk:
     if r:
         df=pd.DataFrame({"Contract":r["contracts"],"Company":r["company"],"Hedge":[-q*25 for q in r["target"]]})
         st.markdown('<div class="section">QUARTERLY DV01</div>',unsafe_allow_html=True)
-        st.bar_chart(df.set_index("Contract"),use_container_width=True)
+        st.bar_chart(df.set_index("Contract"),use_container_width=True,theme=None)
 
 with execute:
     if not r: st.info("Calculate the company risk first.")
@@ -281,7 +281,7 @@ with curve:
                         c1,c2=st.columns(2); c1.metric('Front rate',f'{front:.3f}%'); c2.metric('Curve shape',shape,f'{slope:+.1f} bp')
                         p2=plot[[xcol,'Implied rate %']].copy()
                         p2[xcol]=p2[xcol].map(contract_label)
-                        st.altair_chart(dark_line_chart(p2,xcol,['Implied rate %']),use_container_width=True)
+                        st.altair_chart(dark_line_chart(p2,xcol,['Implied rate %']),use_container_width=True,theme=None)
                         with st.expander('CURVE TABLE'): st.dataframe(plot[[xcol,pcol,'Implied rate %']],use_container_width=True,hide_index=True)
                         st.caption('Implied rate = 100 - futures price. Descriptive curve shape only; not an ECB forecast.')
             except Exception as e: st.error(f'Could not read curve CSV: {e}')
@@ -316,7 +316,7 @@ with curve:
                     if wide is not None and available:
                         start_date=comp["NOW"]["actual_date"].iloc[0].date() if "NOW" in comp else None
                         st.markdown('<div class="section">COMPARE HORIZONS</div>',unsafe_allow_html=True)
-                        visible=st.multiselect("Periods",available,default=available,key="history_periods_v47",label_visibility="collapsed")
+                        visible=st.multiselect("Periods",available,default=available,key="history_periods_v48",label_visibility="collapsed")
                         if not visible: visible=["NOW"] if "NOW" in available else [available[0]]
                         base=wide["NOW"] if "NOW" in wide.columns else wide[available[0]]
                         cards=[]
@@ -328,7 +328,7 @@ with curve:
                                 cards.append(f'<div class="kpi"><div class="kl">{lab} · {d.strftime("%d %b %y").upper()}</div><div class="kv">{delta:+.1f} bp</div><div class="rowsub">avg vs start curve</div></div>')
                         if cards: st.markdown('<div class="kgrid">'+''.join(cards)+'</div>',unsafe_allow_html=True)
                         if start_date: st.caption(f'START · {start_date.strftime("%d %b %Y").upper()}  →  realized curve comparison')
-                        st.altair_chart(curve_compare_chart(wide,visible),use_container_width=True)
+                        st.altair_chart(curve_compare_chart(wide,visible),use_container_width=True,theme=None)
                         display=wide.reset_index()
                         for label in wanted:
                             if label not in display.columns: display[label]="N/A"
@@ -355,9 +355,9 @@ with stress:
             st.dataframe(sdf,use_container_width=True,hide_index=True)
         sr=stress_results(r["company"],r["target"])
         sdf=pd.DataFrame({"Scenario":list(sr["scenarios"].keys()),"P&L":list(sr["scenarios"].values())})
-        st.altair_chart(dark_stress_chart(sdf),use_container_width=True)
+        st.altair_chart(dark_stress_chart(sdf),use_container_width=True,theme=None)
         with st.expander("SCENARIO DEFINITIONS"):
             st.caption("First-order residual DV01 after hedge. Parallel +/-50 and +/-100bp, Front +50, Back +50, Bear steepener and Bull flattener.")
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V4.7 · exact hedge engine")
+st.caption("ATLAS RHO · Mobile V4.8 · exact hedge engine")
