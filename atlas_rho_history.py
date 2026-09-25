@@ -9,6 +9,7 @@ def normalize_history(df):
     d=next((cols[k] for k in ("date","trade_date","day") if k in cols),None)
     p=next((cols[k] for k in ("close","price","last","settle","settlement") if k in cols),None)
     m=next((cols[k] for k in ("contract","expiry","maturity","requested_expiry","local_symbol") if k in cols),None)
+    if m is None and "requested_expiry" in cols: m=cols["requested_expiry"]
     if d is None or p is None or m is None:
         raise ValueError("History CSV needs date, contract/expiry and close/price/settle.")
     x=x[[d,m,p]].rename(columns={d:"date",m:"contract",p:"price"})
