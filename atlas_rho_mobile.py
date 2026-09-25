@@ -212,7 +212,7 @@ with risk:
             exp=c1.date_input(f"Expiry {i+1}",value=x["expiry"],key=f"e_{i}")
             rho=c2.number_input(f"Rho {i+1}",value=float(x["rho"]),step=10000.0,key=f"r_{i}")
             edited.append({"name":f"Bucket {i+1}","expiry":exp,"rho":rho})
-        if st.button("SAVE BUCKETS",use_container_width=True,theme=None):
+        if st.button("SAVE BUCKETS",use_container_width=True):
             st.session_state.buckets=edited; st.session_state.result=None; st.rerun()
 
     with st.expander("⚙  EXECUTION ASSUMPTIONS"):
@@ -222,7 +222,7 @@ with risk:
         ass["pack_spread_bp"]=c2.number_input("Pack bp",0.0,20.0,.5,.125)
         for y,v in {2:.5,3:.625,4:.625,5:.625,6:.625}.items():
             ass[f"bundle_{y}y_spread_bp"]=st.number_input(f"{y}Y Bundle bp",0.0,20.0,v,.125,key=f"bundle_{y}")
-    if st.button("CALCULATE EXACT HEDGE",type="primary",use_container_width=True,theme=None):
+    if st.button("CALCULATE EXACT HEDGE",type="primary",use_container_width=True):
         if not st.session_state.buckets: st.warning("Add at least one rho bucket.")
         else:
             bs=[Bucket(x["name"],x["expiry"],float(x["rho"])) for x in st.session_state.buckets]
@@ -231,7 +231,7 @@ with risk:
     if r:
         df=pd.DataFrame({"Contract":r["contracts"],"Company":r["company"],"Hedge":[-q*25 for q in r["target"]]})
         st.markdown('<div class="section">QUARTERLY DV01</div>',unsafe_allow_html=True)
-        st.bar_chart(df.set_index("Contract"),use_container_width=True,theme=None)
+        st.bar_chart(df.set_index("Contract"),use_container_width=True)
 
 with execute:
     if not r: st.info("Calculate the company risk first.")
@@ -281,7 +281,7 @@ with curve:
                         c1,c2=st.columns(2); c1.metric('Front rate',f'{front:.3f}%'); c2.metric('Curve shape',shape,f'{slope:+.1f} bp')
                         p2=plot[[xcol,'Implied rate %']].copy()
                         p2[xcol]=p2[xcol].map(contract_label)
-                        st.altair_chart(dark_line_chart(p2,xcol,['Implied rate %']),use_container_width=True,theme=None)
+                        st.altair_chart(dark_line_chart(p2,xcol,['Implied rate %']),use_container_width=True)
                         with st.expander('CURVE TABLE'): st.dataframe(plot[[xcol,pcol,'Implied rate %']],use_container_width=True,hide_index=True)
                         st.caption('Implied rate = 100 - futures price. Descriptive curve shape only; not an ECB forecast.')
             except Exception as e: st.error(f'Could not read curve CSV: {e}')
@@ -328,7 +328,7 @@ with curve:
                                 cards.append(f'<div class="kpi"><div class="kl">{lab} · {d.strftime("%d %b %y").upper()}</div><div class="kv">{delta:+.1f} bp</div><div class="rowsub">avg vs start curve</div></div>')
                         if cards: st.markdown('<div class="kgrid">'+''.join(cards)+'</div>',unsafe_allow_html=True)
                         if start_date: st.caption(f'START · {start_date.strftime("%d %b %Y").upper()}  →  realized curve comparison')
-                        st.altair_chart(curve_compare_chart(wide,visible),use_container_width=True,theme=None)
+                        st.altair_chart(curve_compare_chart(wide,visible),use_container_width=True)
                         display=wide.reset_index()
                         for label in wanted:
                             if label not in display.columns: display[label]="N/A"
@@ -355,9 +355,9 @@ with stress:
             st.dataframe(sdf,use_container_width=True,hide_index=True)
         sr=stress_results(r["company"],r["target"])
         sdf=pd.DataFrame({"Scenario":list(sr["scenarios"].keys()),"P&L":list(sr["scenarios"].values())})
-        st.altair_chart(dark_stress_chart(sdf),use_container_width=True,theme=None)
+        st.altair_chart(dark_stress_chart(sdf),use_container_width=True)
         with st.expander("SCENARIO DEFINITIONS"):
             st.caption("First-order residual DV01 after hedge. Parallel +/-50 and +/-100bp, Front +50, Back +50, Bear steepener and Bull flattener.")
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V4.8 · exact hedge engine")
+st.caption("ATLAS RHO · Mobile V4.9 · exact hedge engine")
