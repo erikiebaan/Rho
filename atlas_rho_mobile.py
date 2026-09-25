@@ -290,18 +290,34 @@ with rho_tab:
                 st.rerun()
 
     if r:
-        df=pd.DataFrame({"Contract":r["contracts"],"Company":r["company"],"Hedge":[-q*25 for q in r["target"]]})
-        st.markdown('<div class="section">QUARTERLY DV01</div>',unsafe_allow_html=True)
-        qz=df.melt(id_vars="Contract",value_vars=["Company","Hedge"],var_name="Series",value_name="DV01")
+        # Rebuild the full-company quarterly DV01 with the same engine, so the chart
+        # distinguishes total company exposure from the selected hedge scope.
+        all_bs=[Bucket(x["name"],x["expiry"],float(x["rho"])) for x in st.session_state.buckets]
+        all_rr=full_result(st.session_state.val,all_bs,assumptions=ass)
+        total_map=dict(zip(all_rr["contracts"],all_rr["company"]))
+        selected_map=dict(zip(r["contracts"],r["company"]))
+        hedge_map=dict(zip(r["contracts"],[-q*25 for q in r["target"]]))
+        contracts=list(dict.fromkeys(list(all_rr["contracts"])+list(r["contracts"])))
+        rows=[]
+        for c in contracts:
+            total=float(total_map.get(c,0.0))
+            selected=float(selected_map.get(c,0.0))
+            hedge=float(hedge_map.get(c,0.0))
+            open_dv01=total-selected
+            rows.append({"Contract":c,"Total Company":total,"Hedge":hedge,"Intentional Open":open_dv01})
+        df=pd.DataFrame(rows)
+        st.markdown('<div class="section">QUARTERLY DV01 · COMPANY / HEDGE / OPEN</div>',unsafe_allow_html=True)
+        qz=df.melt(id_vars="Contract",value_vars=["Total Company","Hedge","Intentional Open"],var_name="Series",value_name="DV01")
         qchart=alt.Chart(qz).mark_bar().encode(
-            x=alt.X("Contract:N",sort=r["contracts"],title=None,axis=alt.Axis(labelAngle=-45)),
+            x=alt.X("Contract:N",sort=contracts,title=None,axis=alt.Axis(labelAngle=-45)),
             y=alt.Y("DV01:Q",title="DV01 €/bp"),
-            color=alt.Color("Series:N",scale=alt.Scale(domain=["Company","Hedge"],range=["#d8ff32","#6f7b8a"]),legend=alt.Legend(orient="bottom",title=None)),
+            color=alt.Color("Series:N",scale=alt.Scale(domain=["Total Company","Hedge","Intentional Open"],range=["#d8ff32","#6f7b8a","#ff5d62"]),legend=alt.Legend(orient="bottom",title=None)),
             tooltip=["Contract:N","Series:N",alt.Tooltip("DV01:Q",format=",.1f")]
-        ).properties(height=300,background="#080a0d").configure_view(strokeOpacity=0,fill="#080a0d").configure_axis(
+        ).properties(height=320,background="#080a0d").configure_view(strokeOpacity=0,fill="#080a0d").configure_axis(
             gridColor="#252b33",domainColor="#4a515c",tickColor="#4a515c",labelColor="#aeb5bf",titleColor="#aeb5bf"
         ).configure_legend(labelColor="#aeb5bf")
         st.altair_chart(qchart,use_container_width=True,theme=None)
+        st.caption("Total Company = alle rho. Hedge = futures-DV01 op geselecteerde buckets. Intentional Open = bewust niet gehedged. Company + Hedge = open exposure, afgezien van contractafronding.")
 
 with execute:
     if not r: st.info("Calculate the company risk first.")
@@ -449,4 +465,4 @@ with risk_tab:
         )
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V5.8 · hedge selection + risk")
+st.caption("ATLAS RHO · Mobile V5.9 · company / hedge / open DV01")
