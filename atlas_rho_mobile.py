@@ -127,6 +127,11 @@ def history_comparison(df, selected_date):
         out[label]=z
     return out
 
+def invalid_pre_front_buckets(valuation,buckets):
+    from atlas_rho_engine import first_contract
+    front=first_contract(valuation)
+    return [x for x in buckets if pd.Timestamp(x["expiry"]).date() < front]
+
 def hedge_matrix(valuation,buckets):
     if not buckets: return pd.DataFrame()
     all_bs=[Bucket(x["name"],x["expiry"],float(x["rho"])) for x in buckets]
@@ -323,7 +328,24 @@ with rho_tab:
     if st.session_state.buckets:
         st.markdown('<div class="section">HEDGE MATRIX · DV01 €/BP</div>',unsafe_allow_html=True)
         mx=hedge_matrix(st.session_state.val,st.session_state.buckets)
-        st.dataframe(mx,use_container_width=True,hide_index=True)
+        bad_front=invalid_pre_front_buckets(st.session_state.val,st.session_state.buckets)
+        if bad_front:
+            names=", ".join(pd.Timestamp(x["expiry"]).strftime("%b-%y") for x in bad_front)
+            st.error(f"Niet hedge-baar vanaf deze valuation: {names}. Deze rho-maand ligt vóór het eerste beschikbare hedgecontract.")
+        display_mx=mx.copy()
+        dvcols=[c for c in display_mx.columns if c not in ("Rho month","Rho €","Hedge")]
+        for c in dvcols:
+            display_mx[c]=pd.to_numeric(display_mx[c],errors="coerce").round(2)
+        st.dataframe(display_mx,use_container_width=True,hide_index=True)
+        selected_mx=mx[mx["Hedge"]==True] if not mx.empty else mx
+        totals={c:float(pd.to_numeric(selected_mx[c],errors="coerce").fillna(0).sum()) for c in dvcols}
+        target_row={c:int(round(totals[c]/25.0)) for c in dvcols}
+        check=pd.DataFrame([
+            {"Check":"TOTAL SELECTED DV01",**{c:round(totals[c],2) for c in dvcols}},
+            {"Check":"TARGET FUTURES",**target_row}
+        ])
+        st.caption("CONTROL TOTALS")
+        st.dataframe(check,use_container_width=True,hide_index=True)
         st.caption("Iedere rij is één rho-maand. De kwartaalcellen tonen exact hoe die rho als DV01 over de Euribor-futurescontracten wordt verdeeld.")
 
     with st.expander("⚙  EXECUTION ASSUMPTIONS"):
@@ -338,6 +360,11 @@ with rho_tab:
         if not st.session_state.buckets:
             st.warning("Add at least one rho month.")
         else:
+            bad_front=invalid_pre_front_buckets(st.session_state.val,st.session_state.buckets)
+            if bad_front:
+                names=", ".join(pd.Timestamp(x["expiry"]).strftime("%b-%y") for x in bad_front)
+                st.error(f"Hedge niet berekend: {names} ligt vóór het eerste beschikbare hedgecontract voor deze valuation.")
+                st.stop()
             selected=[x for x in st.session_state.buckets if x.get("hedge",True)]
             total_rho=sum(float(x["rho"]) for x in st.session_state.buckets)
             selected_rho=sum(float(x["rho"]) for x in selected)
@@ -516,8 +543,13 @@ with risk_tab:
         )
         st.markdown('<div class="section">PARALLEL MOVE · FIRST ORDER</div>',unsafe_allow_html=True)
         scenarios=[-50,-25,-10,10,25,50]
-        sdf=pd.DataFrame({"Move (bp)":scenarios,"P&L €":[-total_post*x for x in scenarios]})
-        st.dataframe(sdf,use_container_width=True,hide_index=True)
+        pnl=[0.0 if abs(-total_post*x)<0.005 else round(-total_post*x,2) for x in scenarios]
+        sdf=pd.DataFrame({"Move (bp)":scenarios,"P&L €":pnl})
+        st.dataframe(
+            sdf,use_container_width=True,hide_index=True,
+            column_config={"Move (bp)":st.column_config.NumberColumn("Move (bp)",format="%d"),
+                           "P&L €":st.column_config.NumberColumn("P&L €",format="€ %.2f")}
+        )
         st.caption("P&L = − post-hedge DV01 × rate move. Dit is alleen first-order parallel rho/DV01.")
         st.markdown(
             '<div class="order"><div class="orderhead"><span class="side">KNOWN LIMIT</span><span class="qty">RHO-ONLY DATA</span></div>'
@@ -527,4 +559,4 @@ with risk_tab:
         )
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V6.1 · Excel-style rho + hedge matrix")
+st.caption("ATLAS RHO · Mobile V6.2 · validated matrix + clean risk")
