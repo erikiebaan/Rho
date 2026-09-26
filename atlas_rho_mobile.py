@@ -140,14 +140,33 @@ if st.session_state.result is not None:
     else:
         st.write("No hedge required.")
 
-    out=io.BytesIO()
-    with pd.ExcelWriter(out,engine="openpyxl") as w:
-        pd.DataFrame(st.session_state.input_rows).to_excel(w,index=False,sheet_name="Input")
-        pd.DataFrame(st.session_state.result,columns=["Contract","Side","Quantity"]).to_excel(w,index=False,sheet_name="Hedge")
-    st.download_button(
-        "DOWNLOAD EXCEL",out.getvalue(),"ATLAS_RHO.xlsx",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
+    # Professional Excel export: same structure as the original master workbook.
+    # The template is stored in the repo and only the user inputs are replaced.
+    try:
+        with open("euribor_rho_hedge_model.xlsx","rb") as f:
+            template_bytes=f.read()
+        wb=load_workbook(io.BytesIO(template_bytes))
+        ws=wb["Model"]
+        ws["B4"]=valuation
+
+        # Clear the six input bucket rows and refill from the app.
+        for r in range(8,14):
+            ws.cell(r,1).value=None
+            ws.cell(r,2).value=None
+            ws.cell(r,3).value=None
+        for i,x in enumerate(st.session_state.input_rows[:6],start=8):
+            ws.cell(i,1).value=x["Month"].strftime("%b %Y")
+            ws.cell(i,2).value=x["Month"]
+            ws.cell(i,3).value=float(x["Rho €"])
+
+        out=io.BytesIO()
+        wb.save(out)
+        st.download_button(
+            "DOWNLOAD EXCEL",out.getvalue(),"ATLAS_RHO.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+    except FileNotFoundError:
+        st.error("Excel-template ontbreekt in de app. De hedge-berekening is niet geraakt.")
 
 st.caption("ATLAS RHO · Excel specification V1")
