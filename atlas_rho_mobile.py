@@ -177,7 +177,25 @@ def money_short(x):
 
 def reset_widget_keys():
     for k in list(st.session_state.keys()):
-        if k.startswith("e_") or k.startswith("r_"): del st.session_state[k]
+        if k.startswith("e_") or k.startswith("r_") or k.startswith("h_"): del st.session_state[k]
+
+def execution_assumptions_from_state():
+    a=dict(DEFAULT_EXECUTION)
+    a["outright_spread_bp"]=float(st.session_state.get("ass_out",.5))
+    a["pack_spread_bp"]=float(st.session_state.get("ass_pack",.5))
+    for y,v in {2:.5,3:.625,4:.625,5:.625,6:.625}.items():
+        a[f"bundle_{y}y_spread_bp"]=float(st.session_state.get(f"bundle_{y}",v))
+    return a
+
+def input_signature():
+    b=tuple((str(x.get("expiry")),float(x.get("rho",0.0)),bool(x.get("hedge",True))) for x in st.session_state.get("buckets",[]))
+    a=execution_assumptions_from_state()
+    return (str(st.session_state.get("val")),b,tuple(sorted(a.items())))
+
+def invalidate_if_inputs_changed():
+    if st.session_state.get("result") is not None and st.session_state.get("result_signature") != input_signature():
+        st.session_state.result=None
+        st.session_state.result_signature=None
 
 def load_test():
     st.session_state.val=date(2026,9,25)
@@ -191,10 +209,13 @@ def load_test():
       {"name":"Dec 28","expiry":date(2028,12,1),"rho":800000.0,"hedge":True}]
     reset_widget_keys()
     st.session_state.result=None
+    st.session_state.result_signature=None
 
 if "val" not in st.session_state: st.session_state.val=date.today()
 if "buckets" not in st.session_state: st.session_state.buckets=[]
 if "result" not in st.session_state: st.session_state.result=None
+if "result_signature" not in st.session_state: st.session_state.result_signature=None
+invalidate_if_inputs_changed()
 
 r=st.session_state.result
 st.markdown('<div class="hero"><div class="brand">ATLAS · RATES RISK</div><div class="title">RHO</div><div class="live"><span class="dot"></span>MOBILE WORKSTATION</div></div>',unsafe_allow_html=True)
@@ -260,34 +281,45 @@ with rho_tab:
             st.session_state.buckets=edited; st.session_state.result=None; st.rerun()
 
     with st.expander("⚙  EXECUTION ASSUMPTIONS"):
-        ass=dict(DEFAULT_EXECUTION)
         c1,c2=st.columns(2)
-        ass["outright_spread_bp"]=c1.number_input("Outright bp",0.0,20.0,.5,.125)
-        ass["pack_spread_bp"]=c2.number_input("Pack bp",0.0,20.0,.5,.125)
+        c1.number_input("Outright bp",0.0,20.0,.5,.125,key="ass_out")
+        c2.number_input("Pack bp",0.0,20.0,.5,.125,key="ass_pack")
         for y,v in {2:.5,3:.625,4:.625,5:.625,6:.625}.items():
-            ass[f"bundle_{y}y_spread_bp"]=st.number_input(f"{y}Y Bundle bp",0.0,20.0,v,.125,key=f"bundle_{y}")
+            st.number_input(f"{y}Y Bundle bp",0.0,20.0,v,.125,key=f"bundle_{y}")
+    ass=execution_assumptions_from_state()
     if st.button("CALCULATE EXACT HEDGE",type="primary",use_container_width=True):
         if not st.session_state.buckets: st.warning("Add at least one rho bucket.")
         else:
             selected=[x for x in st.session_state.buckets if x.get("hedge",True)]
-            if not selected:
-                st.warning("Select at least one bucket for hedge.")
-            else:
+            total_rho=sum(float(x["rho"]) for x in st.session_state.buckets)
+            selected_rho=sum(float(x["rho"]) for x in selected)
+            open_rho=total_rho-selected_rho
+            if selected:
                 bs=[Bucket(x["name"],x["expiry"],float(x["rho"])) for x in selected]
                 rr=full_result(st.session_state.val,bs,assumptions=ass)
-                total_rho=sum(float(x["rho"]) for x in st.session_state.buckets)
-                selected_rho=sum(float(x["rho"]) for x in selected)
-                open_rho=total_rho-selected_rho
-                rr["selected_company_rho"]=selected_rho
-                rr["selected_company_dv01"]=selected_rho/100.0
-                rr["total_company_rho"]=total_rho
-                rr["total_company_dv01"]=total_rho/100.0
-                rr["intentional_open_rho"]=open_rho
-                rr["intentional_open_dv01"]=open_rho/100.0
-                rr["selected_parallel_residual_dv01"]=float(rr["parallel_residual_dv01"])
-                rr["total_post_hedge_dv01"]=open_rho/100.0+float(rr["parallel_residual_dv01"])
-                st.session_state.result=rr
-                st.rerun()
+            else:
+                # Valid risk decision: hedge nothing. Keep the company exposure fully open.
+                all_bs=[Bucket(x["name"],x["expiry"],float(x["rho"])) for x in st.session_state.buckets]
+                base=full_result(st.session_state.val,all_bs,assumptions=ass)
+                rr=dict(base)
+                rr.update({
+                    "company_rho":0.0,"company_dv01":0.0,"target_net":0,
+                    "parallel_residual_dv01":0.0,
+                    "company":[0.0]*len(base["contracts"]),"target":[0]*len(base["contracts"]),
+                    "current":[0]*len(base["contracts"]),"trade":[0]*len(base["contracts"]),
+                    "exact_orders":[],"best_orders":[],"exact_cost":0.0,"best_cost":0.0,"saving":0.0
+                })
+            rr["selected_company_rho"]=selected_rho
+            rr["selected_company_dv01"]=selected_rho/100.0
+            rr["total_company_rho"]=total_rho
+            rr["total_company_dv01"]=total_rho/100.0
+            rr["intentional_open_rho"]=open_rho
+            rr["intentional_open_dv01"]=open_rho/100.0
+            rr["selected_parallel_residual_dv01"]=float(rr["parallel_residual_dv01"])
+            rr["total_post_hedge_dv01"]=open_rho/100.0+float(rr["parallel_residual_dv01"])
+            st.session_state.result=rr
+            st.session_state.result_signature=input_signature()
+            st.rerun()
 
     if r:
         # Rebuild the full-company quarterly DV01 with the same engine, so the chart
@@ -317,7 +349,7 @@ with rho_tab:
             gridColor="#252b33",domainColor="#4a515c",tickColor="#4a515c",labelColor="#aeb5bf",titleColor="#aeb5bf"
         ).configure_legend(labelColor="#aeb5bf")
         st.altair_chart(qchart,use_container_width=True,theme=None)
-        st.caption("Total Company = alle rho. Hedge = futures-DV01 op geselecteerde buckets. Intentional Open = bewust niet gehedged. Company + Hedge = open exposure, afgezien van contractafronding.")
+        st.caption("Total Company = alle rho. Hedge = futures-DV01 op geselecteerde buckets. Intentional Open = bewust niet gehedged. Per kwartaal: Total Company + Hedge = Intentional Open + afrondingsresidu van de geselecteerde hedge.")
 
 with execute:
     if not r: st.info("Calculate the company risk first.")
@@ -465,4 +497,4 @@ with risk_tab:
         )
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V5.9 · company / hedge / open DV01")
+st.caption("ATLAS RHO · Mobile V6.0 · audited input state + zero-hedge support")
