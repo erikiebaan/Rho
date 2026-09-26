@@ -1,4 +1,5 @@
 from datetime import date
+import io
 import re
 import html
 import pandas as pd
@@ -126,6 +127,20 @@ def history_comparison(df, selected_date):
         out[label]=z
     return out
 
+def hedge_matrix(valuation,buckets):
+    if not buckets: return pd.DataFrame()
+    all_bs=[Bucket(x["name"],x["expiry"],float(x["rho"])) for x in buckets]
+    all_r=full_result(valuation,all_bs)
+    contracts=all_r["contracts"]
+    rows=[]
+    for x in buckets:
+        one=full_result(valuation,[Bucket(x["name"],x["expiry"],float(x["rho"]))])
+        mp=dict(zip(one["contracts"],one["company"]))
+        row={"Rho month":x["expiry"].strftime("%b-%y"),"Rho €":float(x["rho"]),"Hedge":bool(x.get("hedge",True))}
+        for c in contracts: row[c]=float(mp.get(c,0.0))
+        rows.append(row)
+    return pd.DataFrame(rows)
+
 st.set_page_config(page_title="ATLAS RHO",page_icon="◼",layout="centered",initial_sidebar_state="collapsed")
 
 ACCENT="#d8ff32"
@@ -242,43 +257,74 @@ with rho_tab:
     a.date_input("Valuation",key="val")
     b.button("LOAD TEST",use_container_width=True,on_click=load_test)
 
-    st.markdown('<div class="section">COMPANY RHO BUCKETS</div>',unsafe_allow_html=True)
-    if not st.session_state.buckets:
-        st.markdown('<div class="muted">No rho buckets yet. Add one below or load the audited test case.</div>',unsafe_allow_html=True)
-    for i,x in enumerate(st.session_state.buckets):
-        c1,c2=st.columns([3.2,1.15])
-        c1.markdown(f'<div class="rowcard"><div><div class="rowmain">{html.escape(x["expiry"].strftime("%b %y").upper())}</div><div class="rowsub">{"HEDGE" if x.get("hedge",True) else "INTENTIONAL OPEN"}</div></div><div class="num">{money_short(x["rho"])}</div></div>',unsafe_allow_html=True)
-        hv=c2.checkbox("Hedge",value=bool(x.get("hedge",True)),key=f"h_{i}")
-        if hv != bool(x.get("hedge",True)):
-            st.session_state.buckets[i]["hedge"]=hv
-            st.session_state.result=None
-            st.rerun()
+    st.markdown('<div class="section">RHO INPUT</div>',unsafe_allow_html=True)
+    st.caption("Excel-style input: month, company rho and whether that month is included in the hedge.")
 
-    with st.expander("＋  ADD / EDIT BUCKETS",expanded=False):
-        st.caption("Fast input: paste one bucket per line, for example  Nov-26  -100000")
-        raw=st.text_area("PASTE RHO",height=150,placeholder="Nov-26   -100000\nJan-27   -150000\nJun-27   -400000",key="rho_paste")
-        if st.button("IMPORT PASTED RHO",use_container_width=True):
-            parsed,bad=parse_rho_paste(raw)
-            if bad:
-                st.error("Could not read: " + " | ".join(bad))
-            elif not parsed:
-                st.warning("Paste at least one expiry and rho amount.")
+    input_df=pd.DataFrame([
+        {"Month":x["expiry"],"Rho €":float(x["rho"]),"Hedge":bool(x.get("hedge",True))}
+        for x in st.session_state.buckets
+    ])
+    if input_df.empty:
+        input_df=pd.DataFrame([{"Month":st.session_state.val,"Rho €":0.0,"Hedge":True}])
+
+    edited=st.data_editor(
+        input_df,
+        use_container_width=True,
+        hide_index=True,
+        num_rows="dynamic",
+        column_config={
+            "Month":st.column_config.DateColumn("Month",format="MMM-YY",required=True),
+            "Rho €":st.column_config.NumberColumn("Rho €",format="%.0f",step=10000.0,required=True),
+            "Hedge":st.column_config.CheckboxColumn("Hedge",default=True)
+        },
+        key="rho_grid"
+    )
+
+    c1,c2=st.columns(2)
+    if c1.button("APPLY INPUT",type="primary",use_container_width=True):
+        nb=[]
+        for i,row in edited.iterrows():
+            if pd.isna(row["Month"]) or pd.isna(row["Rho €"]): continue
+            d=pd.Timestamp(row["Month"]).date().replace(day=1)
+            nb.append({"name":d.strftime("%b %y"),"expiry":d,"rho":float(row["Rho €"]),"hedge":bool(row["Hedge"])})
+        st.session_state.buckets=nb
+        st.session_state.result=None
+        st.session_state.result_signature=None
+        st.rerun()
+
+    # Excel import: first sheet, columns Month / Rho / Hedge (Hedge optional).
+    xls=c2.file_uploader("IMPORT EXCEL",type=["xlsx"],label_visibility="collapsed",key="rho_excel")
+    if xls is not None:
+        try:
+            xd=pd.read_excel(xls)
+            cm={str(c).strip().lower():c for c in xd.columns}
+            mc=next((cm[k] for k in ("month","maand","expiry") if k in cm),None)
+            rc=next((cm[k] for k in ("rho €","rho","company rho") if k in cm),None)
+            hc=next((cm[k] for k in ("hedge","hedge?") if k in cm),None)
+            if mc is None or rc is None:
+                st.error("Excel needs columns Month and Rho. Hedge is optional.")
             else:
-                st.session_state.buckets=parsed
-                st.session_state.result=None
-                st.rerun()
-        st.markdown('<div class="muted">Or edit buckets individually</div>',unsafe_allow_html=True)
-        n=st.number_input("Number of buckets",1,20,max(1,len(st.session_state.buckets)),1,key="bucket_n")
-        base=list(st.session_state.buckets)
-        while len(base)<n: base.append({"name":f"Bucket {len(base)+1}","expiry":st.session_state.val,"rho":0.0,"hedge":True})
-        base=base[:n]; edited=[]
-        for i,x in enumerate(base):
-            c1,c2=st.columns([1,1])
-            exp=c1.date_input(f"Expiry {i+1}",value=x["expiry"],key=f"e_{i}")
-            rho=c2.number_input(f"Rho {i+1}",value=float(x["rho"]),step=10000.0,key=f"r_{i}")
-            edited.append({"name":f"Bucket {i+1}","expiry":exp,"rho":rho,"hedge":bool(x.get("hedge",True))})
-        if st.button("SAVE BUCKETS",use_container_width=True):
-            st.session_state.buckets=edited; st.session_state.result=None; st.rerun()
+                nb=[]
+                for _,row in xd.iterrows():
+                    d=pd.to_datetime(row[mc],errors="coerce")
+                    rho=pd.to_numeric(row[rc],errors="coerce")
+                    if pd.isna(d) or pd.isna(rho): continue
+                    dd=d.date().replace(day=1)
+                    hv=True if hc is None or pd.isna(row[hc]) else bool(row[hc])
+                    nb.append({"name":dd.strftime("%b %y"),"expiry":dd,"rho":float(rho),"hedge":hv})
+                if nb and st.button("LOAD EXCEL INTO RHO",use_container_width=True):
+                    st.session_state.buckets=nb
+                    st.session_state.result=None
+                    st.session_state.result_signature=None
+                    st.rerun()
+        except Exception as e:
+            st.error(f"Excel import error: {e}")
+
+    if st.session_state.buckets:
+        st.markdown('<div class="section">HEDGE MATRIX · DV01 €/BP</div>',unsafe_allow_html=True)
+        mx=hedge_matrix(st.session_state.val,st.session_state.buckets)
+        st.dataframe(mx,use_container_width=True,hide_index=True)
+        st.caption("Iedere rij is één rho-maand. De kwartaalcellen tonen exact hoe die rho als DV01 over de Euribor-futurescontracten wordt verdeeld.")
 
     with st.expander("⚙  EXECUTION ASSUMPTIONS"):
         c1,c2=st.columns(2)
@@ -287,8 +333,10 @@ with rho_tab:
         for y,v in {2:.5,3:.625,4:.625,5:.625,6:.625}.items():
             st.number_input(f"{y}Y Bundle bp",0.0,20.0,v,.125,key=f"bundle_{y}")
     ass=execution_assumptions_from_state()
-    if st.button("CALCULATE EXACT HEDGE",type="primary",use_container_width=True):
-        if not st.session_state.buckets: st.warning("Add at least one rho bucket.")
+
+    if st.button("CALCULATE HEDGE",type="primary",use_container_width=True):
+        if not st.session_state.buckets:
+            st.warning("Add at least one rho month.")
         else:
             selected=[x for x in st.session_state.buckets if x.get("hedge",True)]
             total_rho=sum(float(x["rho"]) for x in st.session_state.buckets)
@@ -298,17 +346,13 @@ with rho_tab:
                 bs=[Bucket(x["name"],x["expiry"],float(x["rho"])) for x in selected]
                 rr=full_result(st.session_state.val,bs,assumptions=ass)
             else:
-                # Valid risk decision: hedge nothing. Keep the company exposure fully open.
                 all_bs=[Bucket(x["name"],x["expiry"],float(x["rho"])) for x in st.session_state.buckets]
                 base=full_result(st.session_state.val,all_bs,assumptions=ass)
                 rr=dict(base)
-                rr.update({
-                    "company_rho":0.0,"company_dv01":0.0,"target_net":0,
-                    "parallel_residual_dv01":0.0,
-                    "company":[0.0]*len(base["contracts"]),"target":[0]*len(base["contracts"]),
-                    "current":[0]*len(base["contracts"]),"trade":[0]*len(base["contracts"]),
-                    "exact_orders":[],"best_orders":[],"exact_cost":0.0,"best_cost":0.0,"saving":0.0
-                })
+                rr.update({"company_rho":0.0,"company_dv01":0.0,"target_net":0,"parallel_residual_dv01":0.0,
+                           "company":[0.0]*len(base["contracts"]),"target":[0]*len(base["contracts"]),
+                           "current":[0]*len(base["contracts"]),"trade":[0]*len(base["contracts"]),
+                           "exact_orders":[],"best_orders":[],"exact_cost":0.0,"best_cost":0.0,"saving":0.0})
             rr["selected_company_rho"]=selected_rho
             rr["selected_company_dv01"]=selected_rho/100.0
             rr["total_company_rho"]=total_rho
@@ -321,35 +365,21 @@ with rho_tab:
             st.session_state.result_signature=input_signature()
             st.rerun()
 
-    if r:
-        # Rebuild the full-company quarterly DV01 with the same engine, so the chart
-        # distinguishes total company exposure from the selected hedge scope.
-        all_bs=[Bucket(x["name"],x["expiry"],float(x["rho"])) for x in st.session_state.buckets]
-        all_rr=full_result(st.session_state.val,all_bs,assumptions=ass)
-        total_map=dict(zip(all_rr["contracts"],all_rr["company"]))
-        selected_map=dict(zip(r["contracts"],r["company"]))
-        hedge_map=dict(zip(r["contracts"],[-q*25 for q in r["target"]]))
-        contracts=list(dict.fromkeys(list(all_rr["contracts"])+list(r["contracts"])))
-        rows=[]
-        for c in contracts:
-            total=float(total_map.get(c,0.0))
-            selected=float(selected_map.get(c,0.0))
-            hedge=float(hedge_map.get(c,0.0))
-            open_dv01=total-selected
-            rows.append({"Contract":c,"Total Company":total,"Hedge":hedge,"Intentional Open":open_dv01})
-        df=pd.DataFrame(rows)
-        st.markdown('<div class="section">QUARTERLY DV01 · COMPANY / HEDGE / OPEN</div>',unsafe_allow_html=True)
-        qz=df.melt(id_vars="Contract",value_vars=["Total Company","Hedge","Intentional Open"],var_name="Series",value_name="DV01")
-        qchart=alt.Chart(qz).mark_bar().encode(
-            x=alt.X("Contract:N",sort=contracts,title=None,axis=alt.Axis(labelAngle=-45)),
-            y=alt.Y("DV01:Q",title="DV01 €/bp"),
-            color=alt.Color("Series:N",scale=alt.Scale(domain=["Total Company","Hedge","Intentional Open"],range=["#d8ff32","#6f7b8a","#ff5d62"]),legend=alt.Legend(orient="bottom",title=None)),
-            tooltip=["Contract:N","Series:N",alt.Tooltip("DV01:Q",format=",.1f")]
-        ).properties(height=320,background="#080a0d").configure_view(strokeOpacity=0,fill="#080a0d").configure_axis(
-            gridColor="#252b33",domainColor="#4a515c",tickColor="#4a515c",labelColor="#aeb5bf",titleColor="#aeb5bf"
-        ).configure_legend(labelColor="#aeb5bf")
-        st.altair_chart(qchart,use_container_width=True,theme=None)
-        st.caption("Total Company = alle rho. Hedge = futures-DV01 op geselecteerde buckets. Intentional Open = bewust niet gehedged. Per kwartaal: Total Company + Hedge = Intentional Open + afrondingsresidu van de geselecteerde hedge.")
+    # Excel output contains input, allocation matrix and current hedge result.
+    if st.session_state.buckets:
+        out=io.BytesIO()
+        mx=hedge_matrix(st.session_state.val,st.session_state.buckets)
+        inp=pd.DataFrame([{"Month":x["expiry"],"Rho €":x["rho"],"Hedge":x.get("hedge",True)} for x in st.session_state.buckets])
+        with pd.ExcelWriter(out,engine="openpyxl") as w:
+            inp.to_excel(w,index=False,sheet_name="Rho Input")
+            mx.to_excel(w,index=False,sheet_name="Hedge Matrix")
+            if r:
+                pd.DataFrame({"Contract":r["contracts"],"Target futures":r["target"],"Trade":r["trade"]}).to_excel(w,index=False,sheet_name="Hedge Target")
+                pd.DataFrame(r["best_orders"],columns=["Strategy","Start index","Length","Quantity"]).to_excel(w,index=False,sheet_name="Best Execution")
+        st.download_button("EXPORT EXCEL",data=out.getvalue(),file_name="ATLAS_RHO.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           use_container_width=True)
+
 
 with execute:
     if not r: st.info("Calculate the company risk first.")
@@ -497,4 +527,4 @@ with risk_tab:
         )
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V6.0 · audited input state + zero-hedge support")
+st.caption("ATLAS RHO · Mobile V6.1 · Excel-style rho + hedge matrix")
