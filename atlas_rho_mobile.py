@@ -545,4 +545,4 @@ with risk_tab:
         )
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V6.3 · corrected bucket-to-quarter validation")
+st.caption("ATLAS RHO · Mobile V6.4 · current-quarter rho rolls to front future")
