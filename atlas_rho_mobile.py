@@ -5,7 +5,7 @@ import html
 import pandas as pd
 import streamlit as st
 import altair as alt
-from atlas_rho_engine import Bucket, full_result, DEFAULT_EXECUTION
+from atlas_rho_engine import Bucket, calculate, full_result, excel_round, DEFAULT_EXECUTION
 from atlas_rho_stress import stress_results
 from atlas_rho_history import available_dates
 
@@ -128,18 +128,38 @@ def history_comparison(df, selected_date):
     return out
 
 def hedge_matrix(valuation,buckets):
-    if not buckets: return pd.DataFrame()
+    if not buckets:
+        return pd.DataFrame()
+
+    # Build the common quarterly universe from ALL visible rho rows.
     all_bs=[Bucket(x["name"],x["expiry"],float(x["rho"])) for x in buckets]
-    all_r=full_result(valuation,all_bs)
-    contracts=all_r["contracts"]
+    contracts,_,_=calculate(valuation,all_bs)
+    labels=[d.strftime("%b-%Y") for d in contracts]
+
     rows=[]
     for x in buckets:
-        one=full_result(valuation,[Bucket(x["name"],x["expiry"],float(x["rho"]))])
-        mp=dict(zip(one["contracts"],one["company"]))
-        row={"Rho month":x["expiry"].strftime("%b-%y"),"Rho €":float(x["rho"]),"Hedge":bool(x.get("hedge",True))}
         selected=bool(x.get("hedge",True))
-        for c in contracts: row[c]=float(mp.get(c,0.0)) if selected else 0.0
+        row={
+            "Rho month":x["expiry"].strftime("%b-%y"),
+            "Rho €":float(x["rho"]),
+            "Hedge":selected
+        }
+
+        if selected:
+            # Use the exact same engine allocation rule as CALCULATE HEDGE.
+            # This also guarantees past/current-quarter rho rolls into the
+            # first available quarterly future (e.g. Sep-26 -> Dec-26).
+            one_contracts,one_company,_=calculate(
+                valuation,[Bucket(x["name"],x["expiry"],float(x["rho"]))]
+            )
+            mp={d.strftime("%b-%Y"):float(one_company[d]) for d in one_contracts}
+        else:
+            mp={}
+
+        for label in labels:
+            row[label]=float(mp.get(label,0.0))
         rows.append(row)
+
     return pd.DataFrame(rows)
 
 st.set_page_config(page_title="ATLAS RHO",page_icon="◼",layout="centered",initial_sidebar_state="collapsed")
@@ -294,6 +314,21 @@ with rho_tab:
             "hedge":bool(row["Hedge"])
         })
 
+    # If the visible editor differs from the last calculated/frozen input,
+    # invalidate the old result immediately. No stale hedge may remain on screen.
+    frozen=tuple(
+        (str(x.get("expiry")),float(x.get("rho",0.0)),bool(x.get("hedge",True)))
+        for x in st.session_state.get("buckets",[])
+    )
+    live=tuple(
+        (str(x.get("expiry")),float(x.get("rho",0.0)),bool(x.get("hedge",True)))
+        for x in live_buckets
+    )
+    if live != frozen and st.session_state.get("result") is not None:
+        st.session_state.result=None
+        st.session_state.result_signature=None
+        r=None
+
     # Excel import: first sheet, columns Month / Rho / Hedge (Hedge optional).
     xls=st.file_uploader("IMPORT EXCEL",type=["xlsx"],label_visibility="collapsed",key="rho_excel")
     if xls is not None:
@@ -318,6 +353,7 @@ with rho_tab:
                     st.session_state.buckets=nb
                     st.session_state.result=None
                     st.session_state.result_signature=None
+                    reset_widget_keys()
                     st.rerun()
         except Exception as e:
             st.error(f"Excel import error: {e}")
@@ -332,7 +368,7 @@ with rho_tab:
         st.dataframe(display_mx,use_container_width=True,hide_index=True)
         selected_mx=mx[mx["Hedge"]==True] if not mx.empty else mx
         totals={c:float(pd.to_numeric(selected_mx[c],errors="coerce").fillna(0).sum()) for c in dvcols}
-        target_row={c:int(round(totals[c]/25.0)) for c in dvcols}
+        target_row={c:excel_round(totals[c]/25.0) for c in dvcols}
         check=pd.DataFrame([
             {"Check":"TOTAL SELECTED DV01",**{c:round(totals[c],2) for c in dvcols}},
             {"Check":"TARGET FUTURES",**target_row}
@@ -549,4 +585,4 @@ with risk_tab:
         )
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V6.6 · single-source rho editor")
+st.caption("ATLAS RHO · Mobile V6.7 · unified allocation, rounding and state")
