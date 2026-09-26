@@ -127,11 +127,6 @@ def history_comparison(df, selected_date):
         out[label]=z
     return out
 
-def invalid_pre_front_buckets(valuation,buckets):
-    from atlas_rho_engine import first_contract
-    front=first_contract(valuation)
-    return [x for x in buckets if pd.Timestamp(x["expiry"]).date() < front]
-
 def hedge_matrix(valuation,buckets):
     if not buckets: return pd.DataFrame()
     all_bs=[Bucket(x["name"],x["expiry"],float(x["rho"])) for x in buckets]
@@ -328,10 +323,6 @@ with rho_tab:
     if st.session_state.buckets:
         st.markdown('<div class="section">HEDGE MATRIX · DV01 €/BP</div>',unsafe_allow_html=True)
         mx=hedge_matrix(st.session_state.val,st.session_state.buckets)
-        bad_front=invalid_pre_front_buckets(st.session_state.val,st.session_state.buckets)
-        if bad_front:
-            names=", ".join(pd.Timestamp(x["expiry"]).strftime("%b-%y") for x in bad_front)
-            st.error(f"Niet hedge-baar vanaf deze valuation: {names}. Deze rho-maand ligt vóór het eerste beschikbare hedgecontract.")
         display_mx=mx.copy()
         dvcols=[c for c in display_mx.columns if c not in ("Rho month","Rho €","Hedge")]
         for c in dvcols:
@@ -360,11 +351,6 @@ with rho_tab:
         if not st.session_state.buckets:
             st.warning("Add at least one rho month.")
         else:
-            bad_front=invalid_pre_front_buckets(st.session_state.val,st.session_state.buckets)
-            if bad_front:
-                names=", ".join(pd.Timestamp(x["expiry"]).strftime("%b-%y") for x in bad_front)
-                st.error(f"Hedge niet berekend: {names} ligt vóór het eerste beschikbare hedgecontract voor deze valuation.")
-                st.stop()
             selected=[x for x in st.session_state.buckets if x.get("hedge",True)]
             total_rho=sum(float(x["rho"]) for x in st.session_state.buckets)
             selected_rho=sum(float(x["rho"]) for x in selected)
@@ -559,4 +545,4 @@ with risk_tab:
         )
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V6.2 · validated matrix + clean risk")
+st.caption("ATLAS RHO · Mobile V6.3 · corrected bucket-to-quarter validation")
