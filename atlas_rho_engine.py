@@ -43,8 +43,14 @@ def calculate(valuation,buckets):
     while d<=maxh: contracts.append(d); d=add_months(d,3)
     company={d:0.0 for d in contracts}
     for b in buckets:
-        eligible=[d for d in contracts if d<=qmonth_ceil(b.expiry)]
-        alloc=(b.rho/100.0)/max(len(eligible),1)
+        # Every rho bucket must be allocated to available hedge contracts.
+        # If the rho month is in/past the current quarter after that quarter's
+        # future has rolled, carry it into the front available quarterly future.
+        horizon=max(front,qmonth_ceil(b.expiry))
+        eligible=[d for d in contracts if d<=horizon]
+        if not eligible:
+            raise ValueError(f"No available hedge contract for rho bucket {b.name}")
+        alloc=(b.rho/100.0)/len(eligible)
         for d in eligible: company[d]+=alloc
     targets={d:excel_round(company[d]/CONTRACT_DV01) for d in contracts}
     return contracts,company,targets
