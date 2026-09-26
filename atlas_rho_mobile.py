@@ -314,6 +314,37 @@ with rho_tab:
             "hedge":bool(row["Hedge"])
         })
 
+    # TEMPORARY DIAGNOSTIC: expose the exact live path from editor -> engine.
+    # Remove after the Sep-26/front-roll issue is isolated.
+    if live_buckets:
+        st.markdown('<div class="section">DIAGNOSTIC · LIVE ENGINE PATH</div>',unsafe_allow_html=True)
+        diag_rows=[]
+        for x in live_buckets:
+            try:
+                _bs=Bucket(x["name"],x["expiry"],float(x["rho"]))
+                _contracts,_company,_targets=calculate(st.session_state.val,[_bs])
+                _front=_contracts[0] if _contracts else None
+                _rho_dv01=float(x["rho"])/100.0
+                _alloc_sum=sum(float(_company[d]) for d in _contracts)
+                _alloc_txt=" | ".join(f"{d.strftime('%b-%Y')}={float(_company[d]):.2f}" for d in _contracts)
+                _target_txt=" | ".join(f"{d.strftime('%b-%Y')}={int(_targets[d]):+d}" for d in _contracts)
+                diag_rows.append({
+                    "Input":f"{x['expiry'].strftime('%b-%y')} {float(x['rho']):.0f}",
+                    "Hedge":bool(x.get("hedge",True)),
+                    "Valuation":str(st.session_state.val),
+                    "Front":_front.strftime("%b-%Y") if _front else "—",
+                    "rho/100":_rho_dv01,
+                    "Engine DV01 sum":_alloc_sum,
+                    "Allocation":_alloc_txt,
+                    "Target":_target_txt
+                })
+            except Exception as e:
+                diag_rows.append({"Input":str(x),"Hedge":bool(x.get("hedge",True)),"Valuation":str(st.session_state.val),
+                                  "Front":"ERROR","rho/100":float(x.get("rho",0))/100.0,
+                                  "Engine DV01 sum":None,"Allocation":f"{type(e).__name__}: {e}","Target":"ERROR"})
+        st.dataframe(pd.DataFrame(diag_rows),use_container_width=True,hide_index=True)
+        st.caption("Tijdelijke diagnose: dit toont rechtstreeks wat de live app aan calculate() geeft en wat de engine teruggeeft.")
+
     # If the visible editor differs from the last calculated/frozen input,
     # invalidate the old result immediately. No stale hedge may remain on screen.
     frozen=tuple(
@@ -585,4 +616,4 @@ with risk_tab:
         )
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V6.7 · unified allocation, rounding and state")
+st.caption("ATLAS RHO · Mobile V6.7D · temporary live engine diagnostic")
