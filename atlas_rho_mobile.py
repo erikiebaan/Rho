@@ -137,7 +137,8 @@ def hedge_matrix(valuation,buckets):
         one=full_result(valuation,[Bucket(x["name"],x["expiry"],float(x["rho"]))])
         mp=dict(zip(one["contracts"],one["company"]))
         row={"Rho month":x["expiry"].strftime("%b-%y"),"Rho €":float(x["rho"]),"Hedge":bool(x.get("hedge",True))}
-        for c in contracts: row[c]=float(mp.get(c,0.0))
+        selected=bool(x.get("hedge",True))
+        for c in contracts: row[c]=float(mp.get(c,0.0)) if selected else 0.0
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -337,7 +338,7 @@ with rho_tab:
         ])
         st.caption("CONTROL TOTALS")
         st.dataframe(check,use_container_width=True,hide_index=True)
-        st.caption("Iedere rij is één rho-maand. De kwartaalcellen tonen exact hoe die rho als DV01 over de Euribor-futurescontracten wordt verdeeld.")
+        st.caption("Iedere rij is één rho-maand. Alleen aangevinkte Hedge-rijen worden over de Euribor-futures verdeeld; niet-aangevinkte rho blijft intentional open.")
 
     with st.expander("⚙  EXECUTION ASSUMPTIONS"):
         c1,c2=st.columns(2)
@@ -545,4 +546,4 @@ with risk_tab:
         )
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V6.4 · current-quarter rho rolls to front future")
+st.caption("ATLAS RHO · Mobile V6.5 · hedge matrix follows Hedge selection")
