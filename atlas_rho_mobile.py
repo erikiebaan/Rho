@@ -140,33 +140,84 @@ if st.session_state.result is not None:
     else:
         st.write("No hedge required.")
 
-    # Professional Excel export: same structure as the original master workbook.
-    # The template is stored in the repo and only the user inputs are replaced.
-    try:
-        with open("euribor_rho_hedge_model.xlsx","rb") as f:
-            template_bytes=f.read()
-        wb=load_workbook(io.BytesIO(template_bytes))
-        ws=wb["Model"]
-        ws["B4"]=valuation
+    # Professional master-style Excel export; app hedge logic stays untouched.
+    wb=Workbook()
+    ws=wb.active; ws.title="Model"
+    res=wb.create_sheet("Resultaat")
+    ins=wb.create_sheet("Instructies")
+    risk=wb.create_sheet("Risico's")
+    log=wb.create_sheet("Trade Log")
+    proc=wb.create_sheet("Proces & Uitvoering")
+    navy="17365D"; yellow="FFF2CC"; white="FFFFFF"
 
-        # Clear the six input bucket rows and refill from the app.
-        for r in range(8,14):
-            ws.cell(r,1).value=None
-            ws.cell(r,2).value=None
-            ws.cell(r,3).value=None
-        for i,x in enumerate(st.session_state.input_rows[:6],start=8):
-            ws.cell(i,1).value=x["Month"].strftime("%b %Y")
-            ws.cell(i,2).value=x["Month"]
-            ws.cell(i,3).value=float(x["Rho €"])
+    def make_title(sh,text,subtitle=""):
+        sh.merge_cells("A1:M1"); sh["A1"]=text
+        sh["A1"].font=Font(size=18,bold=True,color=white)
+        sh["A1"].fill=PatternFill("solid",fgColor=navy)
+        if subtitle:
+            sh.merge_cells("A2:M2"); sh["A2"]=subtitle
+            sh["A2"].font=Font(italic=True,color="666666")
 
-        out=io.BytesIO()
-        wb.save(out)
-        st.download_button(
-            "DOWNLOAD EXCEL",out.getvalue(),"ATLAS_RHO.xlsx",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-    except FileNotFoundError:
-        st.error("Excel-template ontbreekt in de app. De hedge-berekening is niet geraakt.")
+    def make_header(cell):
+        cell.font=Font(bold=True,color=white)
+        cell.fill=PatternFill("solid",fgColor=navy)
+        cell.alignment=Alignment(wrap_text=True,vertical="center")
+
+    make_title(ws,"Euribor Rho-Hedge Model","Rho-buckets → automatische strip-hedge in 3-Maands Euribor futures")
+    ws["A4"]="Waarderingsdatum:"; ws["B4"]=valuation
+    ws["B4"].number_format="dd-mm-yyyy"; ws["B4"].fill=PatternFill("solid",fgColor=yellow)
+    ws["A6"]="RHO-BUCKETS (uit ATLAS RHO)"; ws["A6"].font=Font(bold=True,color=navy)
+    heads=["Bucket naam","Expiry datum","Rho (EUR/100bp)","DV01 (EUR/bp)","Hedge-kwartaal","# kwartalen"]
+    for j,h in enumerate(heads,1): ws.cell(7,j).value=h; make_header(ws.cell(7,j))
+
+    front=first_hedge_contract(valuation)
+    prepared=[]
+    for i,x in enumerate(st.session_state.input_rows,start=8):
+        hq=quarter_ceil(x["Month"])
+        n=((hq.year-front.year)*12+(hq.month-front.month))//3+1
+        prepared.append((float(x["Rho €"])/100.0,hq,n))
+        vals=[x["Month"].strftime("%b %Y"),x["Month"],float(x["Rho €"]),float(x["Rho €"])/100.0,hq,n]
+        for j,v in enumerate(vals,1): ws.cell(i,j).value=v
+        ws.cell(i,2).number_format=ws.cell(i,5).number_format="mmm-yy"
+        ws.cell(i,3).number_format='#,##0'; ws.cell(i,4).number_format='#,##0.00'
+        for j in (1,2,3): ws.cell(i,j).fill=PatternFill("solid",fgColor=yellow)
+
+    ladder=max(10,10+len(st.session_state.input_rows))
+    ws.cell(ladder,1).value="HEDGE-LADDER"; ws.cell(ladder,1).font=Font(bold=True,color=navy)
+    lh=["Contractmaand","Netto DV01 toegewezen","Doelpositie","Aantal","Richting"]
+    for j,h in enumerate(lh,1): ws.cell(ladder+1,j).value=h; make_header(ws.cell(ladder+1,j))
+    last=max([p[1] for p in prepared],default=front); contracts=[]; d=front
+    while d<=last: contracts.append(d); d=add_months(d,3)
+    for r,d in enumerate(contracts,ladder+2):
+        dv=sum(v/n for v,hq,n in prepared if d<=hq); q=excel_round(dv/25.0)
+        vals=[d,dv,q,abs(q),"KOOP (long)" if q>0 else ("VERKOOP (short)" if q<0 else "-")]
+        for j,v in enumerate(vals,1): ws.cell(r,j).value=v
+        ws.cell(r,1).number_format="mmm-yy"; ws.cell(r,2).number_format='#,##0.00'
+
+    make_title(res,"Netto Euribor Hedge — uit te voeren per contractmaand","Gebaseerd op ATLAS RHO")
+    for j,h in enumerate(["Contractmaand","Doelpositie","Richting","Aantal"],1): res.cell(4,j).value=h; make_header(res.cell(4,j))
+    for r,t in enumerate(st.session_state.result,start=5):
+        signed=t["Quantity"] if t["Side"]=="BUY" else -t["Quantity"]
+        for j,v in enumerate([t["Contract"],signed,"KOOP" if t["Side"]=="BUY" else "VERKOOP",t["Quantity"]],1): res.cell(r,j).value=v
+
+    make_title(ins,"Euribor Rho-Hedge Model — Instructies")
+    txt=["DV01 = Rho / 100.","Expiry wordt naar het eerstvolgende kwartaal afgerond.","Bucket-DV01 wordt gelijk verdeeld over de kwartaalstrip tot expiry.","1 Euribor future = EUR 25 per basispunt.","Doelpositie = toegewezen DV01 / 25, afgerond op hele contracten.","Positief = KOOP; negatief = VERKOOP."]
+    for r,t in enumerate(txt,3): ins.cell(r,1).value="•  "+t
+
+    make_title(risk,"Risico's van deze Euribor-strip hedge")
+    for r,t in enumerate(["Eerste-orde DV01-benadering; geen convexiteit.","Basisrisico Euribor versus discountcurve.","Vlakke kwartaalverdeling is een vereenvoudiging.","Rho verandert met tijd en portefeuille.","Afronding naar hele futures laat een residu over."],3): risk.cell(r,1).value="•  "+t
+
+    make_title(log,"Trade Log — historie van herhedges")
+    for j,h in enumerate(["Datum herijking","Contractmaand","Doelpositie","Richting","Notities"],1): log.cell(4,j).value=h; make_header(log.cell(4,j))
+    make_title(proc,"Proces & Uitvoering")
+    proc["A3"]="Gebruik Resultaat als uitvoerblad. Leg uitgevoerde herhedges desgewenst vast in Trade Log."
+
+    for sh in wb.worksheets:
+        for col,w in {"A":30,"B":20,"C":22,"D":20,"E":22,"F":16,"G":18,"H":18,"I":18,"J":18,"K":18,"L":18,"M":18}.items(): sh.column_dimensions[col].width=w
+        for row in sh.iter_rows():
+            for cell in row: cell.alignment=Alignment(vertical="top",wrap_text=True)
+
+    out=io.BytesIO(); wb.save(out)
+    st.download_button("DOWNLOAD EXCEL",out.getvalue(),"ATLAS_RHO.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
 
 st.caption("ATLAS RHO · Excel specification V1")
