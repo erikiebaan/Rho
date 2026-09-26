@@ -193,7 +193,7 @@ def money_short(x):
 
 def reset_widget_keys():
     for k in list(st.session_state.keys()):
-        if k.startswith("e_") or k.startswith("r_") or k.startswith("h_"): del st.session_state[k]
+        if k.startswith("e_") or k.startswith("r_") or k.startswith("h_") or k.startswith("rho_grid_"): del st.session_state[k]
 
 def execution_assumptions_from_state():
     a=dict(DEFAULT_EXECUTION)
@@ -278,23 +278,24 @@ with rho_tab:
             "Rho €":st.column_config.NumberColumn("Rho €",format="%.0f",step=10000.0,required=True),
             "Hedge":st.column_config.CheckboxColumn("Hedge",default=True)
         },
-        key="rho_grid"
+        key="rho_grid_v66"
     )
 
-    c1,c2=st.columns(2)
-    if c1.button("APPLY INPUT",type="primary",use_container_width=True):
-        nb=[]
-        for i,row in edited.iterrows():
-            if pd.isna(row["Month"]) or pd.isna(row["Rho €"]): continue
-            d=pd.Timestamp(row["Month"]).date().replace(day=1)
-            nb.append({"name":d.strftime("%b %y"),"expiry":d,"rho":float(row["Rho €"]),"hedge":bool(row["Hedge"])})
-        st.session_state.buckets=nb
-        st.session_state.result=None
-        st.session_state.result_signature=None
-        st.rerun()
+    # SINGLE SOURCE OF TRUTH:
+    # everything below (matrix, totals and CALCULATE) uses this exact visible editor state.
+    live_buckets=[]
+    for _,row in edited.iterrows():
+        if pd.isna(row["Month"]) or pd.isna(row["Rho €"]): continue
+        d=pd.Timestamp(row["Month"]).date().replace(day=1)
+        live_buckets.append({
+            "name":d.strftime("%b %y"),
+            "expiry":d,
+            "rho":float(row["Rho €"]),
+            "hedge":bool(row["Hedge"])
+        })
 
     # Excel import: first sheet, columns Month / Rho / Hedge (Hedge optional).
-    xls=c2.file_uploader("IMPORT EXCEL",type=["xlsx"],label_visibility="collapsed",key="rho_excel")
+    xls=st.file_uploader("IMPORT EXCEL",type=["xlsx"],label_visibility="collapsed",key="rho_excel")
     if xls is not None:
         try:
             xd=pd.read_excel(xls)
@@ -321,9 +322,9 @@ with rho_tab:
         except Exception as e:
             st.error(f"Excel import error: {e}")
 
-    if st.session_state.buckets:
+    if live_buckets:
         st.markdown('<div class="section">HEDGE MATRIX · DV01 €/BP</div>',unsafe_allow_html=True)
-        mx=hedge_matrix(st.session_state.val,st.session_state.buckets)
+        mx=hedge_matrix(st.session_state.val,live_buckets)
         display_mx=mx.copy()
         dvcols=[c for c in display_mx.columns if c not in ("Rho month","Rho €","Hedge")]
         for c in dvcols:
@@ -349,18 +350,20 @@ with rho_tab:
     ass=execution_assumptions_from_state()
 
     if st.button("CALCULATE HEDGE",type="primary",use_container_width=True):
-        if not st.session_state.buckets:
+        if not live_buckets:
             st.warning("Add at least one rho month.")
         else:
-            selected=[x for x in st.session_state.buckets if x.get("hedge",True)]
-            total_rho=sum(float(x["rho"]) for x in st.session_state.buckets)
+            # Freeze exactly what is visible in the editor as the calculated company state.
+            st.session_state.buckets=[dict(x) for x in live_buckets]
+            selected=[x for x in live_buckets if x.get("hedge",True)]
+            total_rho=sum(float(x["rho"]) for x in live_buckets)
             selected_rho=sum(float(x["rho"]) for x in selected)
             open_rho=total_rho-selected_rho
             if selected:
                 bs=[Bucket(x["name"],x["expiry"],float(x["rho"])) for x in selected]
                 rr=full_result(st.session_state.val,bs,assumptions=ass)
             else:
-                all_bs=[Bucket(x["name"],x["expiry"],float(x["rho"])) for x in st.session_state.buckets]
+                all_bs=[Bucket(x["name"],x["expiry"],float(x["rho"])) for x in live_buckets]
                 base=full_result(st.session_state.val,all_bs,assumptions=ass)
                 rr=dict(base)
                 rr.update({"company_rho":0.0,"company_dv01":0.0,"target_net":0,"parallel_residual_dv01":0.0,
@@ -380,10 +383,10 @@ with rho_tab:
             st.rerun()
 
     # Excel output contains input, allocation matrix and current hedge result.
-    if st.session_state.buckets:
+    if live_buckets:
         out=io.BytesIO()
-        mx=hedge_matrix(st.session_state.val,st.session_state.buckets)
-        inp=pd.DataFrame([{"Month":x["expiry"],"Rho €":x["rho"],"Hedge":x.get("hedge",True)} for x in st.session_state.buckets])
+        mx=hedge_matrix(st.session_state.val,live_buckets)
+        inp=pd.DataFrame([{"Month":x["expiry"],"Rho €":x["rho"],"Hedge":x.get("hedge",True)} for x in live_buckets])
         with pd.ExcelWriter(out,engine="openpyxl") as w:
             inp.to_excel(w,index=False,sheet_name="Rho Input")
             mx.to_excel(w,index=False,sheet_name="Hedge Matrix")
@@ -546,4 +549,4 @@ with risk_tab:
         )
 
 st.markdown("---")
-st.caption("ATLAS RHO · Mobile V6.5 · hedge matrix follows Hedge selection")
+st.caption("ATLAS RHO · Mobile V6.6 · single-source rho editor")
