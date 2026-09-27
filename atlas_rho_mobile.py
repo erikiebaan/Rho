@@ -19,13 +19,16 @@ header[data-testid="stHeader"]{{background:transparent}}
 .section{{font-size:.72rem;letter-spacing:.13em;color:#7e8794;font-weight:700;margin:1.2rem 0 .55rem}}
 .stButton>button{{border-radius:14px;min-height:50px;font-weight:750;border:0;background:{ACCENT};color:#090b0e}}
 [data-testid="stDataFrame"]{{border-radius:14px;overflow:hidden}}
-.dual{{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:.4rem 0 1rem}}
-.card{{background:#11151b;border:1px solid #252b34;border-radius:16px;padding:16px}}
-.card-title{{font-size:.70rem;letter-spacing:.12em;color:#8b929e;font-weight:800;margin-bottom:8px}}
-.card-main{{font-size:1.05rem;font-weight:750;color:#f7f8fa}}
-.card-sub{{font-size:.78rem;color:#8b929e;margin-top:6px;line-height:1.35}}
+.compare{{background:#11151b;border:1px solid #252b34;border-radius:16px;overflow:hidden;margin:.35rem 0 .7rem}}
+.compare-head,.compare-row{{display:grid;grid-template-columns:1.1fr 1fr 1fr;align-items:center}}
+.compare-head{{background:#0d1015;color:#8b929e;font-size:.66rem;letter-spacing:.10em;font-weight:800}}
+.compare-head>div,.compare-row>div{{padding:10px 12px;border-right:1px solid #252b34}}
+.compare-head>div:last-child,.compare-row>div:last-child{{border-right:0}}
+.compare-row{{border-top:1px solid #252b34;font-size:.86rem}}
+.compare-row .base{{font-weight:800;color:#f7f8fa}}
+.compare-row .analysed{{color:#8b929e}}
+.why{{font-size:.76rem;color:#8b929e;margin:.35rem .1rem .75rem;line-height:1.35}}
 .locked{{color:#d8ff32;font-weight:800}}
-@media(max-width:640px){{.dual{{grid-template-columns:1fr}}}}
 </style>""",unsafe_allow_html=True)
 
 # ------------------------------------------------------------------
@@ -149,31 +152,30 @@ if st.session_state.result is not None:
     else:
         st.write("No hedge required.")
 
-    st.markdown('<div class="section">BASE → ANALYSE</div>',unsafe_allow_html=True)
-    st.markdown("""
-    <div class="dual">
-      <div class="card">
-        <div class="card-title">BASE HEDGE</div>
-        <div class="card-main"><span class="locked">LOCKED V1</span></div>
-        <div class="card-sub">Rho + expiry → vaste kwartaalstrip. Dit blijft altijd de benchmark.</div>
-      </div>
-      <div class="card">
-        <div class="card-title">ANALYSED HEDGE</div>
-        <div class="card-main">Nog niet actief</div>
-        <div class="card-sub">Wordt pas berekend zodra curve- en risicomethodiek gevalideerd zijn. Geen schijnoptimalisatie.</div>
-      </div>
-    </div>
-    """,unsafe_allow_html=True)
+    st.markdown('<div class="section">BASE → ANALYSED</div>',unsafe_allow_html=True)
+    compare_rows=[]
+    for t in st.session_state.result:
+        base=("BUY " if t["Side"]=="BUY" else "SELL ")+str(t["Quantity"])
+        compare_rows.append(
+            f'<div class="compare-row"><div>{t["Contract"]}</div>'
+            f'<div class="base">{base}</div><div class="analysed">—</div></div>'
+        )
+    st.markdown(
+        '<div class="compare">'
+        '<div class="compare-head"><div>CONTRACT</div><div>BASE</div><div>ANALYSED</div></div>'
+        + ''.join(compare_rows) +
+        '</div>'
+        '<div class="why"><span class="locked">BASE V1 LOCKED</span> · Analysed Hedge volgt pas uit gevalideerde curve- en risicoanalyse.</div>',
+        unsafe_allow_html=True
+    )
 
-    tab_base,tab_curve,tab_risk,tab_alt=st.tabs(["BASELINE","CURVE","RISK","ALTERNATIVES"])
-    with tab_base:
-        st.caption("De Base Hedge hierboven is de vaste referentie en blijft altijd zichtbaar.")
+    tab_curve,tab_risk,tab_alt=st.tabs(["CURVE","RISK","ALTERNATIVES"])
     with tab_curve:
-        st.info("Volgende bouwlaag: actuele Euribor-curve. De curve verandert de Base Hedge niet.")
+        st.caption("Actuele Euribor-curve komt hier. De curve verandert de Base Hedge nooit.")
     with tab_risk:
-        st.info("Volgende bouwlaag: residual risk bij parallel, front/back, steepener en flattener.")
+        st.caption("Residual risk: parallel, front/back, steepener en flattener.")
     with tab_alt:
-        st.info("Hier vergelijken we later de Base Hedge met gevalideerde alternatieven. De analysed hedge krijgt altijd een uitlegbare reden.")
+        st.caption("Vergelijk gevalideerde alternatieven altijd met de Base Hedge.")
 
     # Professional master-style Excel export; app hedge logic stays untouched.
     wb=Workbook()
