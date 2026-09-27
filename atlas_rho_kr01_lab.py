@@ -182,7 +182,7 @@ class IBOptionSnapshot(EWrapper, EClient):
         self.tick_log.append({"reqId": reqId, "kind": "price", "tickType": tickType, "value": price})
         if price is not None and price > 0:
             self.prices.setdefault(reqId, {})[tickType] = float(price)
-            if reqId == 7003 and tickType in (4, 68, 1, 2, 66, 67, 9, 75):
+            if reqId in (7003, 7005, 7006) and tickType in (4, 68, 1, 2, 66, 67, 9, 75):
                 self.underlying_done.set()
 
     def tickString(self, reqId, tickType, value):
@@ -240,12 +240,46 @@ def _fetch_underlying_index(app, market_type, timeout):
         return None, {"contract": None, "ticks": {}, "errors": list(app.errors)}
 
     idx = index_details[0].contract
-    app.reqMarketDataType(int(market_type))
-    app.reqMktData(7003, idx, "", False, False, [])
-    app.underlying_done.wait(timeout)
-    time.sleep(1.0)
-    app.cancelMktData(7003)
-    ticks = dict(app.prices.get(7003, {}))
+
+    # Try the requested feed first. If LIVE is not subscribed, IB can still
+    # provide delayed/frozen data when that feed is available.
+    requested = int(market_type)
+    attempts = [(requested, 7003, "REQUESTED")]
+    if requested == 1:
+        attempts += [(4, 7005, "DELAYED_FROZEN"), (3, 7006, "DELAYED")]
+    elif requested == 2:
+        attempts += [(4, 7005, "DELAYED_FROZEN")]
+
+    used = None
+    used_ticks = {}
+    attempt_log = []
+    underlying = None
+    for md_type, req_id, label in attempts:
+        app.underlying_done.clear()
+        app.prices.pop(req_id, None)
+        err_start = len(app.errors)
+        app.reqMarketDataType(md_type)
+        app.reqMktData(req_id, idx, "", False, False, [])
+        app.underlying_done.wait(min(timeout, 4.0))
+        time.sleep(0.5)
+        app.cancelMktData(req_id)
+        ticks = dict(app.prices.get(req_id, {}))
+        price = _best_price(ticks)
+        attempt_log.append({
+            "label": label,
+            "marketDataType": md_type,
+            "reqId": req_id,
+            "price": price,
+            "ticks": ticks,
+            "tick_log": [x for x in app.tick_log if x.get("reqId") == req_id],
+            "new_errors": app.errors[err_start:],
+        })
+        if price is not None:
+            underlying = price
+            used = {"label": label, "marketDataType": md_type, "reqId": req_id}
+            used_ticks = ticks
+            break
+
     diag = {
         "contract": {
             "conId": idx.conId,
@@ -256,11 +290,12 @@ def _fetch_underlying_index(app, market_type, timeout):
             "primaryExchange": idx.primaryExchange,
             "currency": idx.currency,
         },
-        "ticks": ticks,
-        "tick_log": [x for x in app.tick_log if x.get("reqId") == 7003],
+        "used_feed": used,
+        "ticks": used_ticks,
+        "attempts": attempt_log,
         "errors": list(app.errors),
     }
-    return _best_price(ticks), diag
+    return underlying, diag
 
 
 def find_ib_option(host, port, client_id, expiry, strike, right, market_type=1, timeout=8.0):
@@ -441,6 +476,10 @@ if source == "TWS / IB GATEWAY":
             st.warning("ESTX50 underlying niet ontvangen. Open TWS DIAGNOSTICS hieronder; de KR01-berekening blijft geblokkeerd.")
             with st.expander("TWS DIAGNOSTICS · ESTX50", expanded=False):
                 st.json(diag)
+        else:
+            feed = (diag.get("used_feed") or {}).get("label", "REQUESTED")
+            if feed != "REQUESTED":
+                st.info(f"ESTX50 {ib['underlying']:.2f} ontvangen via {feed.replace('_', ' ')} fallback. Live indexdata is niet geabonneerd.")
 else:
     ib = None
 
@@ -572,4 +611,4 @@ st.markdown(
     "**Gate 3** som bucketed KR01 versus source total Rho · **Gate 4** OIS→Euribor mapping.  "
     "Pas na alle vier gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V0.5 · research only")
+st.caption("ATLAS RHO · KR01 LAB V0.6 · research only")
