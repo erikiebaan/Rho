@@ -111,7 +111,13 @@ if "result" not in st.session_state:
 if "error" not in st.session_state:
     st.session_state.error=None
 if "curve_rates" not in st.session_state:
-    st.session_state.curve_rates={}
+    st.session_state.curve_rates={
+        "Dec-26":2.0,
+        "Mar-27":2.5,
+        "Jun-27":3.5,
+        "Sep-27":4.5,
+        "Dec-27":3.5,
+    }
 
 st.markdown('<div class="brand">ATLAS · RATES RISK</div><div class="title">RHO</div>',unsafe_allow_html=True)
 valuation=st.date_input("Valuation date",value=date.today())
