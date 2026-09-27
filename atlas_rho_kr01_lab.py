@@ -182,7 +182,7 @@ class IBOptionSnapshot(EWrapper, EClient):
         self.tick_log.append({"reqId": reqId, "kind": "price", "tickType": tickType, "value": price})
         if price is not None and price > 0:
             self.prices.setdefault(reqId, {})[tickType] = float(price)
-            if reqId in (7003, 7005, 7006) and tickType in (4, 68, 1, 2, 66, 67, 9, 75):
+            if reqId in (7003, 7004, 7005, 7006) and tickType in (4, 68, 1, 2, 66, 67, 9, 75):
                 self.underlying_done.set()
 
     def tickString(self, reqId, tickType, value):
@@ -246,9 +246,13 @@ def _fetch_underlying_index(app, market_type, timeout):
     requested = int(market_type)
     attempts = [(requested, 7003, "REQUESTED")]
     if requested == 1:
-        attempts += [(4, 7005, "DELAYED_FROZEN"), (3, 7006, "DELAYED")]
+        attempts += [
+            (2, 7004, "FROZEN"),
+            (4, 7005, "DELAYED_FROZEN"),
+            (3, 7006, "DELAYED"),
+        ]
     elif requested == 2:
-        attempts += [(4, 7005, "DELAYED_FROZEN")]
+        attempts += [(4, 7005, "DELAYED_FROZEN"), (3, 7006, "DELAYED")]
 
     used = None
     used_ticks = {}
@@ -611,4 +615,4 @@ st.markdown(
     "**Gate 3** som bucketed KR01 versus source total Rho · **Gate 4** OIS→Euribor mapping.  "
     "Pas na alle vier gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V0.6 · research only")
+st.caption("ATLAS RHO · KR01 LAB V0.7 · research only")
