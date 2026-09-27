@@ -105,7 +105,7 @@ def excel_hedge(valuation,rows):
     return trades
 
 if "input_rows" not in st.session_state:
-    st.session_state.input_rows=[{"Month":date(2027,12,1),"Rho €":-600000.0}]
+    st.session_state.input_rows=[{"Month":date(2027,9,1),"Rho €":-600000.0}]
 if "result" not in st.session_state:
     st.session_state.result=None
 if "error" not in st.session_state:
