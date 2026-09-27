@@ -198,6 +198,81 @@ class IBOptionSnapshot(EWrapper, EClient):
                 self.market_done.set()
 
 
+def find_ib_option(host, port, client_id, expiry, strike, right, market_type=1, timeout=8.0):
+    """Resolve an OESX option from human-readable fields; no conId lookup by user."""
+    if not IBAPI_AVAILABLE:
+        raise RuntimeError("IB TWS Python API is niet geïnstalleerd in deze Python-omgeving.")
+    app = IBOptionSnapshot()
+    app.connect(host, int(port), int(client_id))
+    thread = threading.Thread(target=app.run, daemon=True)
+    thread.start()
+    if not app.ready.wait(timeout):
+        app.disconnect()
+        raise RuntimeError("Geen TWS/IB Gateway verbinding. Controleer API settings, host en poort.")
+
+    c = Contract()
+    c.symbol = "ESTX50"
+    c.secType = "OPT"
+    c.exchange = "EUREX"
+    c.currency = "EUR"
+    c.lastTradeDateOrContractMonth = expiry.strftime("%Y%m%d")
+    c.strike = float(strike)
+    c.right = right.upper()
+    c.multiplier = "10"
+    c.tradingClass = "OESX"
+
+    app.reqContractDetails(7001, c)
+    if not app.details_done.wait(timeout) or not app.details:
+        err = "; ".join(app.errors[-3:])
+        app.disconnect()
+        raise RuntimeError(
+            f"Geen OESX {expiry.strftime('%d-%m-%Y')} {strike:g} {right.upper()} gevonden."
+            + (f" IB: {err}" if err else "")
+        )
+
+    # Exact match first. IB can occasionally return more than one detail record.
+    exact = []
+    for d in app.details:
+        k = d.contract
+        raw = (k.lastTradeDateOrContractMonth or "")[:8]
+        if (
+            raw == expiry.strftime("%Y%m%d")
+            and abs(float(k.strike) - float(strike)) < 1e-9
+            and k.right.upper() == right.upper()
+            and (not k.tradingClass or k.tradingClass == "OESX")
+        ):
+            exact.append(d)
+    if len(exact) != 1:
+        app.disconnect()
+        if not exact:
+            raise RuntimeError("IB gaf contractdetails terug, maar geen unieke exacte OESX-match.")
+        raise RuntimeError(f"IB vond {len(exact)} exacte matches; contractselectie is niet uniek.")
+
+    contract = exact[0].contract
+    app.reqMarketDataType(int(market_type))
+    app.reqMktData(7002, contract, "", False, False, [])
+    app.market_done.wait(timeout)
+    time.sleep(0.5)
+    app.cancelMktData(7002)
+    app.disconnect()
+
+    expiry_raw = contract.lastTradeDateOrContractMonth[:8]
+    resolved_expiry = datetime.strptime(expiry_raw, "%Y%m%d").date() if len(expiry_raw) == 8 else None
+    return {
+        "conId": contract.conId,
+        "symbol": contract.symbol,
+        "localSymbol": contract.localSymbol,
+        "expiry": resolved_expiry,
+        "strike": float(contract.strike),
+        "right": contract.right,
+        "multiplier": float(contract.multiplier or 10),
+        "exchange": contract.exchange,
+        "currency": contract.currency,
+        "model": app.model,
+        "errors": app.errors,
+    }
+
+
 def fetch_ib_option(host, port, client_id, conid, market_type=1, timeout=8.0):
     if not IBAPI_AVAILABLE:
         raise RuntimeError("IB TWS Python API is niet geïnstalleerd in deze Python-omgeving.")
@@ -264,13 +339,19 @@ if source == "TWS / IB GATEWAY":
     c1, c2 = st.columns(2)
     host = c1.text_input("Host", "127.0.0.1")
     port = c2.number_input("Port", value=7496, step=1)
-    c3, c4 = st.columns(2)
-    client_id = c3.number_input("Client ID", value=41, step=1)
-    conid = c4.number_input("Option conId", value=0, step=1)
+    client_id = st.number_input("Client ID", value=41, step=1)
     market_type = st.selectbox("Market data", [1, 2, 3, 4], index=0, format_func=lambda x: {1:"LIVE",2:"FROZEN",3:"DELAYED",4:"DELAYED FROZEN"}[x])
-    if st.button("GET OPTION FROM TWS", use_container_width=True):
+
+    st.caption("Zoek de optie zoals je hem in TWS ziet — conId is niet meer nodig.")
+    s1, s2 = st.columns(2)
+    lookup_expiry = s1.date_input("TWS option expiry", value=third_friday(2027, 9), key="tws_lookup_expiry")
+    lookup_strike = s2.number_input("TWS strike", value=6300.0, step=50.0, key="tws_lookup_strike")
+    lookup_right = st.selectbox("TWS Call / Put", ["C", "P"], key="tws_lookup_right")
+    if st.button("FIND OPTION IN TWS", use_container_width=True):
         try:
-            st.session_state.kr01_ib = fetch_ib_option(host, port, client_id, int(conid), market_type)
+            st.session_state.kr01_ib = find_ib_option(
+                host, port, client_id, lookup_expiry, lookup_strike, lookup_right, market_type
+            )
             st.rerun()
         except Exception as e:
             st.error(str(e))
@@ -405,4 +486,4 @@ st.markdown(
     "**Gate 3** som bucketed KR01 versus source total Rho · **Gate 4** OIS→Euribor mapping.  "
     "Pas na alle vier gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V0.1 · research only")
+st.caption("ATLAS RHO · KR01 LAB V0.2 · research only")
