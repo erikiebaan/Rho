@@ -226,7 +226,44 @@ if st.session_state.result is not None:
         else:
             st.caption("Vul minimaal twee actuele Euribor-rentes in om de curve te zien.")
     with tab_risk:
-        st.caption("Volgende stap: meet het risico van Base V1 bij parallel, front/back, steepener en flattener.")
+        st.caption("Base V1 onder curve-scenario's · analyse only.")
+        if len(valid_curve)<2:
+            st.info("Vul eerst minimaal twee rentes in bij CURVE.")
+        else:
+            n=len(valid_curve)
+            base_by_contract={t["Contract"]:(t["Quantity"] if t["Side"]=="BUY" else -t["Quantity"]) for t in st.session_state.result}
+            contracts=valid_curve["Contract"].astype(str).tolist()
+            base_qty=[base_by_contract.get(c,0) for c in contracts]
+
+            # Signed contract DV01: +25 for BUY, -25 for SELL.
+            # Scenario P&L is first-order futures DV01 only; it deliberately does not
+            # pretend we know the option's key-rate rho from total rho + expiry.
+            dv01=[q*25.0 for q in base_qty]
+            x=[i/(n-1) for i in range(n)]
+            scenarios={
+                "PARALLEL +25":[25.0]*n,
+                "FRONT +25":[25.0*(1-v) for v in x],
+                "BACK +25":[25.0*v for v in x],
+                "STEEPENER":[-12.5+25.0*v for v in x],
+                "FLATTENER":[12.5-25.0*v for v in x],
+            }
+            risk_rows=[]
+            for name,moves in scenarios.items():
+                hedge_move=sum(d*m for d,m in zip(dv01,moves))
+                risk_rows.append({"Scenario":name,"Base hedge Δ €":round(hedge_move,0)})
+            risk_df=pd.DataFrame(risk_rows)
+            st.dataframe(
+                risk_df,use_container_width=True,hide_index=True,
+                column_config={
+                    "Scenario":st.column_config.TextColumn("Scenario"),
+                    "Base hedge Δ €":st.column_config.NumberColumn("Hedge Δ €",format="€ %.0f")
+                }
+            )
+            st.caption(
+                "Dit is de beweging van de futures-hedge zelf bij gestandaardiseerde curve-shocks. "
+                "Residual optie-P&L tonen we bewust nog niet: daarvoor hebben we key-rate rho nodig "
+                "of een expliciet te valideren allocatiemodel."
+            )
     with tab_alt:
         st.caption("Daarna vergelijken we alternatieven altijd tegen Base V1.")
 
