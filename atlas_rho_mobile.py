@@ -146,13 +146,10 @@ if st.session_state.error:
     st.error(st.session_state.error)
 
 if st.session_state.result is not None:
-    st.markdown('<div class="section">HEDGE</div>',unsafe_allow_html=True)
-    if st.session_state.result:
-        st.dataframe(pd.DataFrame(st.session_state.result),use_container_width=True,hide_index=True)
-    else:
+    if not st.session_state.result:
         st.write("No hedge required.")
 
-    st.markdown('<div class="section">BASE → ANALYSED</div>',unsafe_allow_html=True)
+    st.markdown('<div class="section">BASE HEDGE → ANALYSED HEDGE</div>',unsafe_allow_html=True)
     compare_rows=[]
     for t in st.session_state.result:
         base=("BUY " if t["Side"]=="BUY" else "SELL ")+str(t["Quantity"])
