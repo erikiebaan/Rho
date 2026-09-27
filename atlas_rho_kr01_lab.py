@@ -511,7 +511,12 @@ position = c2.number_input("Position contracts", value=-1, step=1)
 
 c1, c2 = st.columns(2)
 multiplier = c1.number_input("€ multiplier / index point", value=float(ib.get("multiplier", 10.0) if ib else 10.0), step=1.0)
-source_rho = c2.number_input("Source total Rho € / +100bp", value=-600000.0, step=10000.0)
+portfolio_rho = c2.number_input(
+    "Research portfolio Rho € / +100bp (later)",
+    value=-600000.0,
+    step=10000.0,
+    help="Dit is de aparte -600k onderzoeksportefeuille. V0.8 gebruikt dit getal NIET voor de validatie of KR01 van de ene geselecteerde optie.",
+)
 
 if ib and model:
     st.caption(
@@ -553,18 +558,13 @@ if st.button("CALCULATE BUCKETED KR01", use_container_width=True, disabled=under
         )
         calc_total_bp = float(kr["KR01 €"].sum())
         calc_rho_100 = calc_total_bp * 100.0
-        target_bp = float(source_rho) / 100.0
-        scale = target_bp / calc_total_bp if abs(calc_total_bp) > 1e-12 else float("nan")
         kr["Weight %"] = kr["KR01 €"] / calc_total_bp * 100.0 if abs(calc_total_bp) > 1e-12 else float("nan")
-        kr["Scaled KR01 €"] = kr["KR01 €"] * scale
-        kr["Direct futures eq."] = kr["Scaled KR01 €"] / 25.0
+        kr["Single-option fut eq."] = kr["KR01 €"] / 25.0
         st.session_state.kr01_result = {
             "base_px": base_px,
             "kr": kr,
             "calc_total_bp": calc_total_bp,
             "calc_rho_100": calc_rho_100,
-            "target_bp": target_bp,
-            "scale": scale,
         }
     except Exception as e:
         st.session_state.kr01_result = None
@@ -572,16 +572,28 @@ if st.button("CALCULATE BUCKETED KR01", use_container_width=True, disabled=under
 
 r = st.session_state.get("kr01_result")
 if r:
-    a, b, c = st.columns(3)
-    a.metric("Own model Rho", f"€ {r['calc_rho_100']:,.0f}")
-    b.metric("Source Rho", f"€ {source_rho:,.0f}")
-    gap = r["calc_rho_100"] - float(source_rho)
-    c.metric("Rho gap", f"€ {gap:,.0f}")
-    if ib and model.get("optPrice") is not None:
+    st.markdown("#### SINGLE OPTION · VALIDATION")
+    if ib and model.get("optPrice") is not None and model.get("optPrice") > 0:
+        ib_px = float(model["optPrice"])
+        px_gap = float(r["base_px"]) - ib_px
+        px_gap_pct = abs(px_gap) / ib_px * 100.0
         p1, p2, p3 = st.columns(3)
         p1.metric("Own option px", f"{r['base_px']:.3f}")
-        p2.metric("IB model px", f"{model['optPrice']:.3f}")
-        p3.metric("Price gap", f"{r['base_px']-model['optPrice']:+.3f}")
+        p2.metric("IB model px", f"{ib_px:.3f}")
+        p3.metric("Price gap", f"{px_gap:+.3f}", f"{px_gap_pct:.2f}%")
+        if px_gap_pct <= 1.0:
+            st.success(f"GATE 2 PRICE CHECK PASS · verschil {px_gap_pct:.2f}%")
+        else:
+            st.warning(
+                f"GATE 2 PRICE CHECK NOG NIET GESLAAGD · verschil {px_gap_pct:.2f}%. "
+                "Eerst eigen curve/dividend/pricer kalibreren; portefeuille-scaling blijft uit."
+            )
+    else:
+        st.warning("Geen geldige IB modelprijs ontvangen; Gate 2 kan nog niet worden beoordeeld.")
+
+    a, b = st.columns(2)
+    a.metric("Single-option KR01", f"€ {r['calc_total_bp']:,.2f} / bp")
+    b.metric("Single-option model Rho", f"€ {r['calc_rho_100']:,.0f} / +100bp")
 
     display = r["kr"].copy()
     st.dataframe(
@@ -591,28 +603,18 @@ if r:
         column_config={
             "KR01 €": st.column_config.NumberColumn("Own KR01 €/bp", format="€ %.2f"),
             "Weight %": st.column_config.NumberColumn("Weight", format="%.1f%%"),
-            "Scaled KR01 €": st.column_config.NumberColumn("Scaled to source", format="€ %.2f"),
-            "Direct futures eq.": st.column_config.NumberColumn("Fut eq.", format="%.1f"),
+            "Single-option fut eq.": st.column_config.NumberColumn("Fut eq. (1 option)", format="%.3f"),
         },
     )
-
-    own = r["calc_rho_100"]
-    src = float(source_rho)
-    rel_gap = abs(own - src) / max(abs(src), 1.0)
-    if rel_gap <= 0.05:
-        st.success(f"TOTAL-RHO CHECK PASS · afwijking {rel_gap*100:.1f}%")
-    else:
-        st.warning(f"TOTAL-RHO CHECK NIET GESLAAGD · afwijking {rel_gap*100:.1f}%. Eerst curve/dividend/model kalibreren; analysed hedge blijft uit.")
-
-    st.caption(
-        "Scaled KR01 behoudt de door bump-and-revalue gemeten bucketgewichten, maar schaalt de som exact naar de opgegeven source Rho. "
-        "Direct futures eq. is alleen een 25 €/bp equivalent per bucket — nog géén gevalideerde FEU3 mapping of Analysed Hedge."
+    st.info(
+        f"De onderzoeksportefeuille van € {portfolio_rho:,.0f} Rho staat apart en wordt hier bewust NIET gebruikt. "
+        "Eerst bewijzen we de prijs en KR01-verdeling van deze ene echte OESX-optie."
     )
 
 st.markdown('<div class="section">VALIDATION GATES</div>', unsafe_allow_html=True)
 st.markdown(
-    "**Gate 1** contract + IB modeldata · **Gate 2** eigen option price versus markt/model · "
-    "**Gate 3** som bucketed KR01 versus source total Rho · **Gate 4** OIS→Euribor mapping.  "
-    "Pas na alle vier gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
+    "**Gate 1** contract + IB modeldata · **Gate 2** eigen option price versus IB model · "
+    "**Gate 3** bucketed KR01 van de optie valideren · **Gate 4** OIS→Euribor mapping.  "
+    "De €600k onderzoeksportefeuille wordt pas daarna gekoppeld. Pas na alle gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V0.7 · research only")
+st.caption("ATLAS RHO · KR01 LAB V0.8 · research only")
