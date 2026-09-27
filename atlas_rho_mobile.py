@@ -183,14 +183,38 @@ if st.session_state.result is not None:
                 "Contract":st.column_config.TextColumn("Contract"),
                 "Rate %":st.column_config.NumberColumn("Rate %",format="%.3f",step=0.01)
             },
-            key="curve_editor"
+            key="curve_editor_"+"_".join(curve_contracts)
         )
         valid_curve=curve_edit.dropna(subset=["Rate %"]).copy()
         for _,r in valid_curve.iterrows():
             st.session_state.curve_rates[str(r["Contract"])]=float(r["Rate %"])
         if len(valid_curve)>=2:
-            chart=valid_curve.set_index("Contract")[["Rate %"]]
-            st.line_chart(chart,use_container_width=True,height=220)
+            # Explicit Vega-Lite spec prevents Streamlit's mobile line-chart autoscale/state issue.
+            curve_plot=valid_curve[["Contract","Rate %"]].copy()
+            curve_plot["Rate %"]=pd.to_numeric(curve_plot["Rate %"],errors="coerce")
+            st.vega_lite_chart(
+                curve_plot,
+                {
+                    "mark":{"type":"line","point":True,"strokeWidth":3},
+                    "encoding":{
+                        "x":{
+                            "field":"Contract","type":"ordinal","sort":None,
+                            "axis":{"title":None,"labelAngle":-45}
+                        },
+                        "y":{
+                            "field":"Rate %","type":"quantitative",
+                            "scale":{"zero":False},
+                            "axis":{"title":"Rate %","format":".2f"}
+                        },
+                        "tooltip":[
+                            {"field":"Contract","type":"ordinal"},
+                            {"field":"Rate %","type":"quantitative","format":".3f"}
+                        ]
+                    },
+                    "height":220
+                },
+                use_container_width=True
+            )
             first=float(valid_curve.iloc[0]["Rate %"])
             last=float(valid_curve.iloc[-1]["Rate %"])
             slope=(last-first)*100.0
