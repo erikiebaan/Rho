@@ -418,7 +418,12 @@ right = c2.selectbox("Call / Put", ["C", "P"], index=0 if not ib or ib.get("righ
 
 model = ib.get("model", {}) if ib else {}
 c1, c2 = st.columns(2)
-spot = c1.number_input("Underlying SX5E", value=float(ib.get("underlying", model.get("undPrice", 5000.0)) if ib else 5000.0), step=1.0)
+underlying_value = ib.get("underlying") if ib else None
+if underlying_value is None:
+    underlying_value = model.get("undPrice")
+if underlying_value is None or underlying_value <= 0:
+    underlying_value = 5000.0
+spot = c1.number_input("Underlying SX5E", value=float(underlying_value), step=1.0)
 vol_pct = c2.number_input("Implied vol %", value=float(model.get("impliedVol", 0.20) * 100.0), step=0.1)
 
 c1, c2 = st.columns(2)
@@ -530,4 +535,4 @@ st.markdown(
     "**Gate 3** som bucketed KR01 versus source total Rho · **Gate 4** OIS→Euribor mapping.  "
     "Pas na alle vier gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V0.3 · research only")
+st.caption("ATLAS RHO · KR01 LAB V0.4 · research only")
