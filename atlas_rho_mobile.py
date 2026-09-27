@@ -110,6 +110,8 @@ if "result" not in st.session_state:
     st.session_state.result=None
 if "error" not in st.session_state:
     st.session_state.error=None
+if "curve_rates" not in st.session_state:
+    st.session_state.curve_rates={}
 
 st.markdown('<div class="brand">ATLAS · RATES RISK</div><div class="title">RHO</div>',unsafe_allow_html=True)
 valuation=st.date_input("Valuation date",value=date.today())
@@ -168,11 +170,41 @@ if st.session_state.result is not None:
 
     tab_curve,tab_risk,tab_alt=st.tabs(["CURVE","RISK","ALTERNATIVES"])
     with tab_curve:
-        st.caption("Actuele Euribor-curve komt hier. De curve verandert de Base Hedge nooit.")
+        st.caption("Actuele curve · alleen analyse — verandert Base V1 nooit.")
+        curve_contracts=[t["Contract"] for t in st.session_state.result]
+        curve_df=pd.DataFrame({
+            "Contract":curve_contracts,
+            "Rate %":[st.session_state.curve_rates.get(c,None) for c in curve_contracts]
+        })
+        curve_edit=st.data_editor(
+            curve_df,use_container_width=True,hide_index=True,
+            disabled=["Contract"],
+            column_config={
+                "Contract":st.column_config.TextColumn("Contract"),
+                "Rate %":st.column_config.NumberColumn("Rate %",format="%.3f",step=0.01)
+            },
+            key="curve_editor"
+        )
+        valid_curve=curve_edit.dropna(subset=["Rate %"]).copy()
+        for _,r in valid_curve.iterrows():
+            st.session_state.curve_rates[str(r["Contract"])]=float(r["Rate %"])
+        if len(valid_curve)>=2:
+            chart=valid_curve.set_index("Contract")[["Rate %"]]
+            st.line_chart(chart,use_container_width=True,height=220)
+            first=float(valid_curve.iloc[0]["Rate %"])
+            last=float(valid_curve.iloc[-1]["Rate %"])
+            slope=(last-first)*100.0
+            shape="UPWARD" if slope>1 else ("DOWNWARD" if slope<-1 else "FLAT")
+            c1,c2=st.columns(2)
+            c1.metric("Front → back",f"{slope:+.1f} bp")
+            c2.metric("Shape",shape)
+            st.caption("Dit beschrijft alleen de huidige curvevorm. De analysed hedge wordt hier nog niet uit afgeleid.")
+        else:
+            st.caption("Vul minimaal twee actuele Euribor-rentes in om de curve te zien.")
     with tab_risk:
-        st.caption("Residual risk: parallel, front/back, steepener en flattener.")
+        st.caption("Volgende stap: meet het risico van Base V1 bij parallel, front/back, steepener en flattener.")
     with tab_alt:
-        st.caption("Vergelijk gevalideerde alternatieven altijd met de Base Hedge.")
+        st.caption("Daarna vergelijken we alternatieven altijd tegen Base V1.")
 
     # Professional master-style Excel export; app hedge logic stays untouched.
     wb=Workbook()
