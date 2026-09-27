@@ -2,6 +2,8 @@ from datetime import date
 import io, math
 import pandas as pd
 import streamlit as st
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
 
 st.set_page_config(page_title="ATLAS RHO",page_icon="◼",layout="centered",initial_sidebar_state="collapsed")
 
@@ -17,6 +19,13 @@ header[data-testid="stHeader"]{{background:transparent}}
 .section{{font-size:.72rem;letter-spacing:.13em;color:#7e8794;font-weight:700;margin:1.2rem 0 .55rem}}
 .stButton>button{{border-radius:14px;min-height:50px;font-weight:750;border:0;background:{ACCENT};color:#090b0e}}
 [data-testid="stDataFrame"]{{border-radius:14px;overflow:hidden}}
+.dual{{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:.4rem 0 1rem}}
+.card{{background:#11151b;border:1px solid #252b34;border-radius:16px;padding:16px}}
+.card-title{{font-size:.70rem;letter-spacing:.12em;color:#8b929e;font-weight:800;margin-bottom:8px}}
+.card-main{{font-size:1.05rem;font-weight:750;color:#f7f8fa}}
+.card-sub{{font-size:.78rem;color:#8b929e;margin-top:6px;line-height:1.35}}
+.locked{{color:#d8ff32;font-weight:800}}
+@media(max-width:640px){{.dual{{grid-template-columns:1fr}}}}
 </style>""",unsafe_allow_html=True)
 
 # ------------------------------------------------------------------
@@ -139,6 +148,32 @@ if st.session_state.result is not None:
         st.dataframe(pd.DataFrame(st.session_state.result),use_container_width=True,hide_index=True)
     else:
         st.write("No hedge required.")
+
+    st.markdown('<div class="section">BASE → ANALYSE</div>',unsafe_allow_html=True)
+    st.markdown("""
+    <div class="dual">
+      <div class="card">
+        <div class="card-title">BASE HEDGE</div>
+        <div class="card-main"><span class="locked">LOCKED V1</span></div>
+        <div class="card-sub">Rho + expiry → vaste kwartaalstrip. Dit blijft altijd de benchmark.</div>
+      </div>
+      <div class="card">
+        <div class="card-title">ANALYSED HEDGE</div>
+        <div class="card-main">Nog niet actief</div>
+        <div class="card-sub">Wordt pas berekend zodra curve- en risicomethodiek gevalideerd zijn. Geen schijnoptimalisatie.</div>
+      </div>
+    </div>
+    """,unsafe_allow_html=True)
+
+    tab_base,tab_curve,tab_risk,tab_alt=st.tabs(["BASELINE","CURVE","RISK","ALTERNATIVES"])
+    with tab_base:
+        st.caption("De Base Hedge hierboven is de vaste referentie en blijft altijd zichtbaar.")
+    with tab_curve:
+        st.info("Volgende bouwlaag: actuele Euribor-curve. De curve verandert de Base Hedge niet.")
+    with tab_risk:
+        st.info("Volgende bouwlaag: residual risk bij parallel, front/back, steepener en flattener.")
+    with tab_alt:
+        st.info("Hier vergelijken we later de Base Hedge met gevalideerde alternatieven. De analysed hedge krijgt altijd een uitlegbare reden.")
 
     # Professional master-style Excel export; app hedge logic stays untouched.
     wb=Workbook()
