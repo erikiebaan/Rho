@@ -151,6 +151,7 @@ class IBOptionSnapshot(EWrapper, EClient):
         self.ready = threading.Event()
         self.details_done = threading.Event()
         self.market_done = threading.Event()
+        self.underlying_done = threading.Event()
         self.details = []
         self.model = {}
         self.prices = {}
@@ -178,7 +179,9 @@ class IBOptionSnapshot(EWrapper, EClient):
 
     def tickPrice(self, reqId, tickType, price, attrib):
         if price is not None and price > 0:
-            self.prices[tickType] = float(price)
+            self.prices.setdefault(reqId, {})[tickType] = float(price)
+            if reqId == 7003 and tickType in (4, 68, 1, 2, 66, 67, 9, 75):
+                self.underlying_done.set()
 
     def tickOptionComputation(self, reqId, tickType, tickAttrib, impliedVol, delta,
                               optPrice, pvDividend, gamma, vega, theta, undPrice):
@@ -196,6 +199,38 @@ class IBOptionSnapshot(EWrapper, EClient):
             self.model = {k: float(v) for k, v in vals.items() if v is not None and abs(v) < 1e307}
             if all(k in self.model for k in ("impliedVol", "optPrice", "undPrice")):
                 self.market_done.set()
+
+
+def _best_price(ticks):
+    """Prefer last, then close, then bid/ask midpoint for an index snapshot."""
+    if not ticks:
+        return None
+    for tick in (4, 68):  # LAST / DELAYED_LAST
+        if ticks.get(tick, 0) > 0:
+            return ticks[tick]
+    for tick in (9, 75):  # CLOSE / DELAYED_CLOSE
+        if ticks.get(tick, 0) > 0:
+            return ticks[tick]
+    bid = ticks.get(1) or ticks.get(66)
+    ask = ticks.get(2) or ticks.get(67)
+    if bid and ask:
+        return (bid + ask) / 2.0
+    return bid or ask
+
+
+def _fetch_underlying_index(app, market_type, timeout):
+    """Request ESTX50 index separately; option model ticks can omit undPrice."""
+    idx = Contract()
+    idx.symbol = "ESTX50"
+    idx.secType = "IND"
+    idx.exchange = "EUREX"
+    idx.currency = "EUR"
+    app.reqMarketDataType(int(market_type))
+    app.reqMktData(7003, idx, "", False, False, [])
+    app.underlying_done.wait(timeout)
+    time.sleep(0.35)
+    app.cancelMktData(7003)
+    return _best_price(app.prices.get(7003, {}))
 
 
 def find_ib_option(host, port, client_id, expiry, strike, right, market_type=1, timeout=8.0):
@@ -254,6 +289,14 @@ def find_ib_option(host, port, client_id, expiry, strike, right, market_type=1, 
     app.market_done.wait(timeout)
     time.sleep(0.5)
     app.cancelMktData(7002)
+
+    # Do not rely on the option-computation undPrice: request ESTX50 itself.
+    underlying = _fetch_underlying_index(app, market_type, timeout)
+    if underlying is None:
+        # Last-resort fallback to a valid undPrice from the option model tick.
+        candidate = app.model.get("undPrice")
+        if candidate is not None and candidate > 0:
+            underlying = float(candidate)
     app.disconnect()
 
     expiry_raw = contract.lastTradeDateOrContractMonth[:8]
@@ -269,6 +312,7 @@ def find_ib_option(host, port, client_id, expiry, strike, right, market_type=1, 
         "exchange": contract.exchange,
         "currency": contract.currency,
         "model": app.model,
+        "underlying": underlying,
         "errors": app.errors,
     }
 
@@ -374,7 +418,7 @@ right = c2.selectbox("Call / Put", ["C", "P"], index=0 if not ib or ib.get("righ
 
 model = ib.get("model", {}) if ib else {}
 c1, c2 = st.columns(2)
-spot = c1.number_input("Underlying SX5E", value=float(model.get("undPrice", 5000.0)), step=1.0)
+spot = c1.number_input("Underlying SX5E", value=float(ib.get("underlying", model.get("undPrice", 5000.0)) if ib else 5000.0), step=1.0)
 vol_pct = c2.number_input("Implied vol %", value=float(model.get("impliedVol", 0.20) * 100.0), step=0.1)
 
 c1, c2 = st.columns(2)
@@ -486,4 +530,4 @@ st.markdown(
     "**Gate 3** som bucketed KR01 versus source total Rho · **Gate 4** OIS→Euribor mapping.  "
     "Pas na alle vier gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V0.2 · research only")
+st.caption("ATLAS RHO · KR01 LAB V0.3 · research only")
