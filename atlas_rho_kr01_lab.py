@@ -156,6 +156,7 @@ class IBOptionSnapshot(EWrapper, EClient):
         self.model = {}
         self.prices = {}
         self.errors = []
+        self.tick_log = []
 
     def nextValidId(self, orderId):
         self.ready.set()
@@ -178,10 +179,14 @@ class IBOptionSnapshot(EWrapper, EClient):
         self.details_done.set()
 
     def tickPrice(self, reqId, tickType, price, attrib):
+        self.tick_log.append({"reqId": reqId, "kind": "price", "tickType": tickType, "value": price})
         if price is not None and price > 0:
             self.prices.setdefault(reqId, {})[tickType] = float(price)
             if reqId == 7003 and tickType in (4, 68, 1, 2, 66, 67, 9, 75):
                 self.underlying_done.set()
+
+    def tickString(self, reqId, tickType, value):
+        self.tick_log.append({"reqId": reqId, "kind": "string", "tickType": tickType, "value": value})
 
     def tickOptionComputation(self, reqId, tickType, tickAttrib, impliedVol, delta,
                               optPrice, pvDividend, gamma, vega, theta, undPrice):
@@ -219,18 +224,43 @@ def _best_price(ticks):
 
 
 def _fetch_underlying_index(app, market_type, timeout):
-    """Request ESTX50 index separately; option model ticks can omit undPrice."""
-    idx = Contract()
-    idx.symbol = "ESTX50"
-    idx.secType = "IND"
-    idx.exchange = "EUREX"
-    idx.currency = "EUR"
+    """Resolve the exact ESTX50 index contract first, then request its market data."""
+    probe = Contract()
+    probe.symbol = "ESTX50"
+    probe.secType = "IND"
+    probe.exchange = "EUREX"
+    probe.currency = "EUR"
+
+    app.details = []
+    app.details_done.clear()
+    app.reqContractDetails(7004, probe)
+    app.details_done.wait(timeout)
+    index_details = list(app.details)
+    if not index_details:
+        return None, {"contract": None, "ticks": {}, "errors": list(app.errors)}
+
+    idx = index_details[0].contract
     app.reqMarketDataType(int(market_type))
     app.reqMktData(7003, idx, "", False, False, [])
     app.underlying_done.wait(timeout)
-    time.sleep(0.35)
+    time.sleep(1.0)
     app.cancelMktData(7003)
-    return _best_price(app.prices.get(7003, {}))
+    ticks = dict(app.prices.get(7003, {}))
+    diag = {
+        "contract": {
+            "conId": idx.conId,
+            "symbol": idx.symbol,
+            "localSymbol": idx.localSymbol,
+            "secType": idx.secType,
+            "exchange": idx.exchange,
+            "primaryExchange": idx.primaryExchange,
+            "currency": idx.currency,
+        },
+        "ticks": ticks,
+        "tick_log": [x for x in app.tick_log if x.get("reqId") == 7003],
+        "errors": list(app.errors),
+    }
+    return _best_price(ticks), diag
 
 
 def find_ib_option(host, port, client_id, expiry, strike, right, market_type=1, timeout=8.0):
@@ -291,7 +321,7 @@ def find_ib_option(host, port, client_id, expiry, strike, right, market_type=1, 
     app.cancelMktData(7002)
 
     # Do not rely on the option-computation undPrice: request ESTX50 itself.
-    underlying = _fetch_underlying_index(app, market_type, timeout)
+    underlying, underlying_diag = _fetch_underlying_index(app, market_type, timeout)
     if underlying is None:
         # Last-resort fallback to a valid undPrice from the option model tick.
         candidate = app.model.get("undPrice")
@@ -313,6 +343,7 @@ def find_ib_option(host, port, client_id, expiry, strike, right, market_type=1, 
         "currency": contract.currency,
         "model": app.model,
         "underlying": underlying,
+        "underlying_diag": underlying_diag,
         "errors": app.errors,
     }
 
@@ -405,6 +436,11 @@ if source == "TWS / IB GATEWAY":
         m = ib.get("model", {})
         if not m:
             st.warning("Contract gevonden, maar geen IB model-option data ontvangen. Controleer market-data permissies.")
+        diag = ib.get("underlying_diag", {})
+        if ib.get("underlying") is None:
+            st.warning("ESTX50 underlying niet ontvangen. Open TWS DIAGNOSTICS hieronder; de KR01-berekening blijft geblokkeerd.")
+            with st.expander("TWS DIAGNOSTICS · ESTX50", expanded=False):
+                st.json(diag)
 else:
     ib = None
 
@@ -463,7 +499,8 @@ curve_edit = st.data_editor(
 st.caption("Standaardgrenzen gebruiken de derde woensdag van Mar/Jun/Sep/Dec en option expiry. Pas de curve aan zodra we de definitieve EUR discount/OIS-nodes invoeren.")
 
 st.markdown('<div class="section">3 · BUMP & REVALUE</div>', unsafe_allow_html=True)
-if st.button("CALCULATE BUCKETED KR01", use_container_width=True):
+underlying_missing = bool(source == "TWS / IB GATEWAY" and ib and ib.get("underlying") is None)
+if st.button("CALCULATE BUCKETED KR01", use_container_width=True, disabled=underlying_missing):
     try:
         curve = validate_curve(curve_edit, valuation, expiry)
         st.session_state.kr01_curve = curve.to_dict("records")
@@ -535,4 +572,4 @@ st.markdown(
     "**Gate 3** som bucketed KR01 versus source total Rho · **Gate 4** OIS→Euribor mapping.  "
     "Pas na alle vier gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V0.4 · research only")
+st.caption("ATLAS RHO · KR01 LAB V0.5 · research only")
