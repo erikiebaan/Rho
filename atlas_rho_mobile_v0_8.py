@@ -59,7 +59,8 @@ def excel_round(x):
 
 def locked_v17_base(exposures, valuation=VALUATION):
     horizons=[hedge_quarter(d) for d,_ in exposures]
-    qs=quarter_strip(valuation,max(horizons))
+    last=max(first_quarter(valuation),max(horizons))
+    qs=quarter_strip(valuation,last)
     kr01={q:0.0 for q in qs}; detail=[]
     front=qs[0]
     for d,rho in exposures:
