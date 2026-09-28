@@ -301,8 +301,10 @@ class IBOptionSnapshot(EWrapper, EClient):
         self.details_done = threading.Event()
         self.market_done = threading.Event()
         self.underlying_done = threading.Event()
+        self.calc_done = threading.Event()
         self.details = []
         self.model = {}
+        self.calc_results = {}
         self.prices = {}
         self.errors = []
         self.tick_log = []
@@ -339,18 +341,27 @@ class IBOptionSnapshot(EWrapper, EClient):
 
     def tickOptionComputation(self, reqId, tickType, tickAttrib, impliedVol, delta,
                               optPrice, pvDividend, gamma, vega, theta, undPrice):
+        vals = {
+            "impliedVol": impliedVol,
+            "delta": delta,
+            "optPrice": optPrice,
+            "pvDividend": pvDividend,
+            "gamma": gamma,
+            "vega": vega,
+            "theta": theta,
+            "undPrice": undPrice,
+        }
+        clean = {k: float(v) for k, v in vals.items() if v is not None and abs(v) < 1e307}
+
+        # Keep calculateOptionPrice() responses separate from streaming model ticks.
+        if reqId >= 7300:
+            self.calc_results[reqId] = clean
+            if "optPrice" in clean:
+                self.calc_done.set()
+            return
+
         if tickType == 13 or not self.model:
-            vals = {
-                "impliedVol": impliedVol,
-                "delta": delta,
-                "optPrice": optPrice,
-                "pvDividend": pvDividend,
-                "gamma": gamma,
-                "vega": vega,
-                "theta": theta,
-                "undPrice": undPrice,
-            }
-            self.model = {k: float(v) for k, v in vals.items() if v is not None and abs(v) < 1e307}
+            self.model = clean
             if all(k in self.model for k in ("impliedVol", "optPrice", "undPrice")):
                 self.market_done.set()
 
@@ -536,6 +547,81 @@ def find_ib_option(host, port, client_id, expiry, strike, right, market_type=1, 
     }
 
 
+
+def ib_reprice_option(host, port, client_id, expiry, strike, right, volatility, underlying, timeout=8.0):
+    """Gate 4B-1: ask IB calculateOptionPrice() to reprice the same OESX option."""
+    if not IBAPI_AVAILABLE:
+        raise RuntimeError("IB TWS Python API is niet geïnstalleerd in deze Python-omgeving.")
+
+    app = IBOptionSnapshot()
+    app.connect(host, int(port), int(client_id))
+    thread = threading.Thread(target=app.run, daemon=True)
+    thread.start()
+    if not app.ready.wait(timeout):
+        app.disconnect()
+        raise RuntimeError("Geen TWS/IB Gateway verbinding voor IB repricing-control.")
+
+    q = Contract()
+    q.symbol = "ESTX50"
+    q.secType = "OPT"
+    q.exchange = "EUREX"
+    q.currency = "EUR"
+    q.lastTradeDateOrContractMonth = expiry.strftime("%Y%m%d")
+    q.strike = float(strike)
+    q.right = right.upper()
+    q.multiplier = "10"
+    q.tradingClass = "OESX"
+
+    app.details = []
+    app.details_done.clear()
+    app.reqContractDetails(7299, q)
+    if not app.details_done.wait(timeout) or not app.details:
+        err = "; ".join(app.errors[-3:])
+        app.disconnect()
+        raise RuntimeError("IB repricing-control kon het OESX-contract niet oplossen." + (f" IB: {err}" if err else ""))
+
+    exact = []
+    for d in app.details:
+        k = d.contract
+        raw = (k.lastTradeDateOrContractMonth or "")[:8]
+        if (
+            raw == expiry.strftime("%Y%m%d")
+            and abs(float(k.strike) - float(strike)) < 1e-9
+            and k.right.upper() == right.upper()
+            and (not k.tradingClass or k.tradingClass == "OESX")
+        ):
+            exact.append(d)
+    if len(exact) != 1:
+        app.disconnect()
+        raise RuntimeError(f"IB repricing-control verwacht 1 exacte OESX-match, kreeg {len(exact)}.")
+
+    contract = exact[0].contract
+    req_id = 7301
+    app.calc_done.clear()
+    app.calculateOptionPrice(req_id, contract, float(volatility), float(underlying), [])
+    app.calc_done.wait(timeout)
+    result = dict(app.calc_results.get(req_id, {}))
+    try:
+        app.cancelCalculateOptionPrice(req_id)
+    except Exception:
+        pass
+    errors = list(app.errors)
+    app.disconnect()
+
+    if "optPrice" not in result:
+        err = "; ".join(errors[-4:])
+        raise RuntimeError("Geen IB calculateOptionPrice-resultaat ontvangen." + (f" IB: {err}" if err else ""))
+
+    return {
+        "conId": contract.conId,
+        "localSymbol": contract.localSymbol,
+        "input_iv": float(volatility),
+        "input_underlying": float(underlying),
+        "result": result,
+        "errors": errors,
+    }
+
+
 EURIBOR_TEST_CONTRACTS = [
     {"month": "Oct-26", "expiry": "202610", "role": "SERIAL · FRONT RESEARCH"},
     {"month": "Nov-26", "expiry": "202611", "role": "SERIAL · FRONT RESEARCH"},
@@ -710,6 +796,8 @@ if "kr01_ib" not in st.session_state:
     st.session_state.kr01_ib = None
 if "kr01_euribor_strip" not in st.session_state:
     st.session_state.kr01_euribor_strip = None
+if "kr01_ib_reprice" not in st.session_state:
+    st.session_state.kr01_ib_reprice = None
 if "kr01_curve_key" not in st.session_state:
     st.session_state.kr01_curve_key = None
 
@@ -796,6 +884,47 @@ if ib and model:
         f"delta {model.get('delta', float('nan')):.4f} · PV div {model.get('pvDividend', float('nan')):.2f}. "
         "IB levert via tickOptionComputation geen bucketed rho; die rekenen we hieronder zelf."
     )
+
+
+if source == "TWS / IB GATEWAY" and ib and model:
+    st.markdown("#### IB REPRICING CONTROL · V1.6")
+    st.caption(
+        "IB tegen IB: we sturen dezelfde OESX-optie terug naar calculateOptionPrice() met de "
+        "IB model-IV en dezelfde SX5E underlying. Rente/dividend/modelaannames blijven bij IB. "
+        "Dit verandert Base V1 of de hedge niet."
+    )
+    if st.button("RUN IB REPRICING CONTROL", use_container_width=True):
+        try:
+            st.session_state.kr01_ib_reprice = ib_reprice_option(
+                host, port, int(client_id) + 2, expiry, strike, right,
+                float(model.get("impliedVol")), float(spot),
+            )
+            st.rerun()
+        except Exception as e:
+            st.error(str(e))
+
+    ib_reprice = st.session_state.kr01_ib_reprice
+    if ib_reprice:
+        rr = ib_reprice.get("result", {})
+        calc_px = float(rr.get("optPrice", float("nan")))
+        stream_px = float(model.get("optPrice", float("nan")))
+        gap = calc_px - stream_px
+        gap_pct = abs(gap) / abs(stream_px) * 100.0 if stream_px else float("nan")
+        r1, r2, r3 = st.columns(3)
+        r1.metric("IB streaming model", f"{stream_px:.3f}")
+        r2.metric("IB calculateOptionPrice", f"{calc_px:.3f}")
+        r3.metric("IB↔IB gap", f"{gap:+.3f}", f"{gap_pct:.3f}%")
+        st.caption(
+            f"Inputs naar IB: IV {ib_reprice['input_iv']*100:.3f}% · SX5E {ib_reprice['input_underlying']:.2f}. "
+            "De API-call krijgt géén eigen rente- of dividendcurve van ons mee."
+        )
+        if gap_pct <= 0.10:
+            st.success("GATE 4B-1 CONTROL PASS · IB repricing reproduceert de IB streaming modelprijs binnen 0,10%.")
+        else:
+            st.warning(
+                "GATE 4B-1 CONTROL NOG NIET PASS · IB repricing wijkt meer dan 0,10% af. "
+                "Controleer eerst timing/feed/modelinputs; geen hedgeconclusie trekken."
+            )
 
 st.markdown('<div class="section">2 · EUR CURVE BUCKETS</div>', unsafe_allow_html=True)
 curve_key = (valuation, expiry)
@@ -1122,7 +1251,7 @@ if r and source == "TWS / IB GATEWAY" and ib and model.get("optPrice") is not No
         )
 
 
-        st.markdown("#### IB AUTO EUR CURVE · V1.5")
+        st.markdown("#### IB AUTO EUR CURVE · V1.6")
         st.caption(
             "De waarden hieronder komen uit de EUR Interest Rate Navigator-screenshot van 28-09-2026. "
             "IB documenteert deze tabel als simple time-deposit rates op 360-dagenbasis en zet ze intern om "
@@ -1209,7 +1338,7 @@ st.markdown('<div class="section">VALIDATION GATES</div>', unsafe_allow_html=Tru
 st.markdown(
     "**Gate 1** contract + IB modeldata · **Gate 2** eigen option price versus IB model · "
     "**Gate 3** bucketed KR01 van de optie · **Gate 4A** ICE Euribor instrument/period mapping · "
-    "**Gate 4B-1** IB pricing-rate/curve validation · **Gate 4B-2** Euribor hedge mapping/basis.  "
+    "**Gate 4B-1** IB pricing-rate/curve + IB repricing validation · **Gate 4B-2** Euribor hedge mapping/basis.  "
     "De €600k onderzoeksportefeuille wordt pas daarna gekoppeld. Pas na alle gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V1.5 · research only")
+st.caption("ATLAS RHO · KR01 LAB V1.6 · research only")
