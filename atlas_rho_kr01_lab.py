@@ -387,6 +387,76 @@ def find_ib_option(host, port, client_id, expiry, strike, right, market_type=1, 
     }
 
 
+EURIBOR_TEST_CONTRACTS = [
+    {"month": "Oct-26", "expiry": "202610", "local": "IV6", "conId": 873309581, "role": "FRONT PROXY"},
+    {"month": "Dec-26", "expiry": "202612", "local": "IZ6", "conId": 460390619, "role": "DEC→MAR"},
+    {"month": "Mar-27", "expiry": "202703", "local": "IH7", "conId": 476937869, "role": "MAR→JUN"},
+    {"month": "Jun-27", "expiry": "202706", "local": "IM7", "conId": 496885442, "role": "JUN→SEP"},
+    {"month": "Sep-27", "expiry": "202709", "local": "IU7", "conId": 514365267, "role": "SEP→DEC"},
+]
+
+
+def fetch_euribor_strip(host, port, client_id, market_type=1, timeout=6.0):
+    """Fetch the user's known FEU3 contracts from TWS. conIds come from the user's own IB history file."""
+    if not IBAPI_AVAILABLE:
+        raise RuntimeError("IB TWS Python API is niet geïnstalleerd in deze Python-omgeving.")
+    app = IBOptionSnapshot()
+    app.connect(host, int(port), int(client_id))
+    thread = threading.Thread(target=app.run, daemon=True)
+    thread.start()
+    if not app.ready.wait(timeout):
+        app.disconnect()
+        raise RuntimeError("Geen TWS/IB Gateway verbinding voor Euribor strip.")
+
+    rows = []
+    requested = int(market_type)
+    md_attempts = [requested]
+    if requested == 1:
+        md_attempts += [2, 4, 3]
+    elif requested == 2:
+        md_attempts += [4, 3]
+
+    for j, spec in enumerate(EURIBOR_TEST_CONTRACTS):
+        app.details = []
+        app.details_done.clear()
+        q = Contract()
+        q.conId = int(spec["conId"])
+        q.exchange = "EUREX"
+        app.reqContractDetails(7200 + j, q)
+        app.details_done.wait(timeout)
+        if not app.details:
+            rows.append({**spec, "price": None, "rate": None, "feed": None, "status": "CONTRACT NOT FOUND"})
+            continue
+        contract = app.details[0].contract
+
+        price = None
+        feed_used = None
+        for k, md in enumerate(md_attempts):
+            req_id = 7300 + j * 10 + k
+            app.prices.pop(req_id, None)
+            app.reqMarketDataType(md)
+            app.reqMktData(req_id, contract, "", False, False, [])
+            time.sleep(1.0)
+            app.cancelMktData(req_id)
+            px = _best_price(app.prices.get(req_id, {}))
+            if px is not None:
+                price = float(px)
+                feed_used = {1:"LIVE", 2:"FROZEN", 3:"DELAYED", 4:"DELAYED FROZEN"}.get(md, str(md))
+                break
+
+        rows.append({
+            **spec,
+            "resolved_local": contract.localSymbol,
+            "price": price,
+            "rate": (100.0 - price) if price is not None else None,
+            "feed": feed_used,
+            "status": "OK" if price is not None else "NO QUOTE",
+        })
+
+    app.disconnect()
+    return rows
+
+
 def fetch_ib_option(host, port, client_id, conid, market_type=1, timeout=8.0):
     if not IBAPI_AVAILABLE:
         raise RuntimeError("IB TWS Python API is niet geïnstalleerd in deze Python-omgeving.")
@@ -438,6 +508,8 @@ def fetch_ib_option(host, port, client_id, conid, market_type=1, timeout=8.0):
 
 if "kr01_ib" not in st.session_state:
     st.session_state.kr01_ib = None
+if "kr01_euribor_strip" not in st.session_state:
+    st.session_state.kr01_euribor_strip = None
 if "kr01_curve_key" not in st.session_state:
     st.session_state.kr01_curve_key = None
 
@@ -611,10 +683,89 @@ if r:
         "Eerst bewijzen we de prijs en KR01-verdeling van deze ene echte OESX-optie."
     )
 
+
+if r and source == "TWS / IB GATEWAY":
+    st.markdown('<div class="section">4 · EURIBOR FUTURES MAPPING</div>', unsafe_allow_html=True)
+    st.caption(
+        "Nu koppelen we de gemeten option-KR01 aan de echte FEU3-renteperioden. "
+        "Belangrijk: een contractmaand benoemt het BEGIN van de 3-maands renteperiode."
+    )
+    if st.button("LOAD EURIBOR FUTURES FROM TWS", use_container_width=True):
+        try:
+            st.session_state.kr01_euribor_strip = fetch_euribor_strip(
+                host, port, int(client_id) + 1, market_type
+            )
+            st.rerun()
+        except Exception as e:
+            st.error(str(e))
+
+    strip = st.session_state.get("kr01_euribor_strip")
+    if strip:
+        fut_df = pd.DataFrame([{
+            "Contract": x["month"],
+            "IB local": x.get("resolved_local") or x["local"],
+            "Price": x["price"],
+            "Implied 3M %": x["rate"],
+            "Rate period": x["role"],
+            "Feed": x["feed"],
+            "Status": x["status"],
+        } for x in strip])
+        st.dataframe(
+            fut_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Price": st.column_config.NumberColumn("Price", format="%.3f"),
+                "Implied 3M %": st.column_config.NumberColumn("Implied 3M %", format="%.3f%%"),
+            },
+        )
+
+        krdf = r["kr"].reset_index(drop=True)
+        map_rows = []
+        map_names = [
+            ("FRONT STUB", "Geen exacte quarterly FEU3", "Oct-26 alleen proxy/overlap"),
+            ("Dec-26", "IZ6", "Dec→Mar"),
+            ("Mar-27", "IH7", "Mar→Jun"),
+            ("Jun-27", "IM7", "Jun→Sep"),
+            ("Sep-27", "IU7", "alleen laatste dagen vóór option expiry"),
+        ]
+        for n, row in krdf.iterrows():
+            m = map_names[n] if n < len(map_names) else ("—", "—", "—")
+            map_rows.append({
+                "Option KR01 bucket": row["Bucket"],
+                "KR01 €/bp": row["KR01 €"],
+                "Weight %": row["Weight %"],
+                "FEU3 mapping": m[0],
+                "IB local": m[1],
+                "Interpretation": m[2],
+            })
+        st.dataframe(
+            pd.DataFrame(map_rows),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "KR01 €/bp": st.column_config.NumberColumn("KR01 €/bp", format="€ %.2f"),
+                "Weight %": st.column_config.NumberColumn("Weight", format="%.1f%%"),
+            },
+        )
+
+        ok = all(x.get("price") is not None for x in strip[1:])
+        if ok:
+            st.success(
+                "GATE 4A INSTRUMENT MAPPING PASS · Dec-26, Mar-27, Jun-27 en Sep-27 zijn live/frozen uit TWS gekoppeld. "
+                "De front stub blijft bewust apart."
+            )
+        else:
+            st.warning("GATE 4A NOG NIET GESLAAGD · één of meer kwartaalfutures hebben geen bruikbare TWS-koers.")
+        st.warning(
+            "Nog géén Gate 4B: FEU3 is 3M Euribor, terwijl de option-pricer een discount/forward curve gebruikt. "
+            "Basis/convexity en de front stub moeten nog worden gevalideerd vóór Analysed Hedge."
+        )
+
 st.markdown('<div class="section">VALIDATION GATES</div>', unsafe_allow_html=True)
 st.markdown(
     "**Gate 1** contract + IB modeldata · **Gate 2** eigen option price versus IB model · "
-    "**Gate 3** bucketed KR01 van de optie valideren · **Gate 4** OIS→Euribor mapping.  "
+    "**Gate 3** bucketed KR01 van de optie · **Gate 4A** FEU3 instrument/period mapping · **Gate 4B** discount/OIS→Euribor basis/convexity.  "
     "De €600k onderzoeksportefeuille wordt pas daarna gekoppeld. Pas na alle gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V0.8 · research only")
+st.caption("ATLAS RHO · KR01 LAB V0.9 · research only")
