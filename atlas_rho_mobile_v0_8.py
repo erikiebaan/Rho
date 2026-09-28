@@ -245,6 +245,19 @@ def optimize_exact_execution(contracts,required,assumptions):
         "reference_orders":len(outright),
     }
 
+def execution_integrity_check():
+    """Regression guard: optimizer may change execution only, never the selected hedge."""
+    exposures=[(parse_month(m),v) for m,v in DEFAULT_EXPOSURE]
+    contracts,_,_=analysed_target_and_lots(exposures)
+    base,_=align_base(exposures,contracts)
+    ex=optimize_exact_execution(contracts,base,EXEC_DEFAULTS)
+    if ex["reconstructed"] != [int(x) for x in base]:
+        raise RuntimeError("execution hedge reconstruction differs from selected hedge")
+    if abs(ex["difference_dv01"]) > 1e-12:
+        raise RuntimeError("execution curve difference is not zero")
+    if ex["best_cost"] > ex["reference_cost"] + 1e-9:
+        raise RuntimeError("execution optimizer is more expensive than all-outright reference")
+
 def scenario_values(target,lots):
     residual=target-np.asarray(lots,dtype=float)*KR01_PER_FUTURE
     n=len(residual); z=np.linspace(0,1,n) if n>1 else np.zeros(1)
@@ -306,6 +319,7 @@ st.set_page_config(page_title="ATLAS RHO Mobile",page_icon="◼",layout="centere
 
 try:
     engine_integrity_check()
+    execution_integrity_check()
 except Exception as exc:
     st.error(f"ENGINE LOCK FAILED · {exc}")
     st.stop()
