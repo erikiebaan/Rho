@@ -388,16 +388,56 @@ def find_ib_option(host, port, client_id, expiry, strike, right, market_type=1, 
 
 
 EURIBOR_TEST_CONTRACTS = [
-    {"month": "Oct-26", "expiry": "202610", "local": "IV6", "conId": 873309581, "role": "FRONT PROXY"},
-    {"month": "Dec-26", "expiry": "202612", "local": "IZ6", "conId": 460390619, "role": "DEC→MAR"},
-    {"month": "Mar-27", "expiry": "202703", "local": "IH7", "conId": 476937869, "role": "MAR→JUN"},
-    {"month": "Jun-27", "expiry": "202706", "local": "IM7", "conId": 496885442, "role": "JUN→SEP"},
-    {"month": "Sep-27", "expiry": "202709", "local": "IU7", "conId": 514365267, "role": "SEP→DEC"},
+    {"month": "Oct-26", "expiry": "202610", "role": "FRONT PROXY"},
+    {"month": "Dec-26", "expiry": "202612", "role": "DEC→MAR"},
+    {"month": "Mar-27", "expiry": "202703", "role": "MAR→JUN"},
+    {"month": "Jun-27", "expiry": "202706", "role": "JUN→SEP"},
+    {"month": "Sep-27", "expiry": "202709", "role": "SEP→DEC"},
 ]
 
 
+def _resolve_euribor_future(app, expiry, timeout):
+    """Resolve FEU3 by IB's product symbol EU3 + contract month; never rely on stored conIds."""
+    attempts = [
+        ("EU3", "EUREX"),
+        ("EU3", "EUREXEU"),
+    ]
+    diagnostics = []
+    for symbol, exchange in attempts:
+        app.details = []
+        app.details_done.clear()
+        q = Contract()
+        q.symbol = symbol
+        q.secType = "FUT"
+        q.exchange = exchange
+        q.currency = "EUR"
+        q.lastTradeDateOrContractMonth = expiry
+        req_id = 7200 + len(diagnostics)
+        err_start = len(app.errors)
+        app.reqContractDetails(req_id, q)
+        app.details_done.wait(timeout)
+        details = list(app.details)
+        diagnostics.append({
+            "symbol": symbol,
+            "exchange": exchange,
+            "expiry": expiry,
+            "matches": len(details),
+            "errors": app.errors[err_start:],
+        })
+        if details:
+            # Prefer exact contractMonth, then local-symbol month encoded by IB.
+            exact = [
+                d for d in details
+                if (getattr(d, "contractMonth", "") or "").startswith(expiry)
+                or (d.contract.lastTradeDateOrContractMonth or "").startswith(expiry)
+            ]
+            d = exact[0] if exact else details[0]
+            return d.contract, diagnostics
+    return None, diagnostics
+
+
 def fetch_euribor_strip(host, port, client_id, market_type=1, timeout=6.0):
-    """Fetch the user's known FEU3 contracts from TWS. conIds come from the user's own IB history file."""
+    """Resolve current 3M Euribor futures dynamically in TWS, then fetch a usable quote."""
     if not IBAPI_AVAILABLE:
         raise RuntimeError("IB TWS Python API is niet geïnstalleerd in deze Python-omgeving.")
     app = IBOptionSnapshot()
@@ -417,28 +457,33 @@ def fetch_euribor_strip(host, port, client_id, market_type=1, timeout=6.0):
         md_attempts += [4, 3]
 
     for j, spec in enumerate(EURIBOR_TEST_CONTRACTS):
-        app.details = []
-        app.details_done.clear()
-        q = Contract()
-        q.conId = int(spec["conId"])
-        q.exchange = "EUREX"
-        app.reqContractDetails(7200 + j, q)
-        app.details_done.wait(timeout)
-        if not app.details:
-            rows.append({**spec, "price": None, "rate": None, "feed": None, "status": "CONTRACT NOT FOUND"})
+        contract, resolve_diag = _resolve_euribor_future(app, spec["expiry"], timeout)
+        if contract is None:
+            rows.append({
+                **spec, "conId": None, "resolved_local": None, "price": None,
+                "rate": None, "feed": None, "status": "CONTRACT NOT FOUND",
+                "resolve_diag": resolve_diag,
+            })
             continue
-        contract = app.details[0].contract
 
         price = None
         feed_used = None
+        quote_diag = []
         for k, md in enumerate(md_attempts):
             req_id = 7300 + j * 10 + k
             app.prices.pop(req_id, None)
+            err_start = len(app.errors)
             app.reqMarketDataType(md)
             app.reqMktData(req_id, contract, "", False, False, [])
-            time.sleep(1.0)
+            time.sleep(1.2)
             app.cancelMktData(req_id)
-            px = _best_price(app.prices.get(req_id, {}))
+            ticks = dict(app.prices.get(req_id, {}))
+            px = _best_price(ticks)
+            quote_diag.append({
+                "marketDataType": md,
+                "ticks": ticks,
+                "errors": app.errors[err_start:],
+            })
             if px is not None:
                 price = float(px)
                 feed_used = {1:"LIVE", 2:"FROZEN", 3:"DELAYED", 4:"DELAYED FROZEN"}.get(md, str(md))
@@ -446,11 +491,14 @@ def fetch_euribor_strip(host, port, client_id, market_type=1, timeout=6.0):
 
         rows.append({
             **spec,
+            "conId": int(contract.conId),
             "resolved_local": contract.localSymbol,
             "price": price,
             "rate": (100.0 - price) if price is not None else None,
             "feed": feed_used,
             "status": "OK" if price is not None else "NO QUOTE",
+            "resolve_diag": resolve_diag,
+            "quote_diag": quote_diag,
         })
 
     app.disconnect()
@@ -703,7 +751,8 @@ if r and source == "TWS / IB GATEWAY":
     if strip:
         fut_df = pd.DataFrame([{
             "Contract": x["month"],
-            "IB local": x.get("resolved_local") or x["local"],
+            "IB local": x.get("resolved_local") or "—",
+            "conId": x.get("conId"),
             "Price": x["price"],
             "Implied 3M %": x["rate"],
             "Rate period": x["role"],
@@ -757,6 +806,17 @@ if r and source == "TWS / IB GATEWAY":
             )
         else:
             st.warning("GATE 4A NOG NIET GESLAAGD · één of meer kwartaalfutures hebben geen bruikbare TWS-koers.")
+            with st.expander("TWS DIAGNOSTICS · EURIBOR"):
+                diag_rows = []
+                for x in strip:
+                    diag_rows.append({
+                        "Contract": x["month"],
+                        "Status": x["status"],
+                        "conId": x.get("conId"),
+                        "Resolve": str(x.get("resolve_diag", [])),
+                        "Quote": str(x.get("quote_diag", [])),
+                    })
+                st.dataframe(pd.DataFrame(diag_rows), use_container_width=True, hide_index=True)
         st.warning(
             "Nog géén Gate 4B: FEU3 is 3M Euribor, terwijl de option-pricer een discount/forward curve gebruikt. "
             "Basis/convexity en de front stub moeten nog worden gevalideerd vóór Analysed Hedge."
@@ -768,4 +828,4 @@ st.markdown(
     "**Gate 3** bucketed KR01 van de optie · **Gate 4A** FEU3 instrument/period mapping · **Gate 4B** discount/OIS→Euribor basis/convexity.  "
     "De €600k onderzoeksportefeuille wordt pas daarna gekoppeld. Pas na alle gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V0.9 · research only")
+st.caption("ATLAS RHO · KR01 LAB V1.0 · research only")
