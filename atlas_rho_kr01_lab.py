@@ -1,5 +1,6 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import math
+import numpy as np
 import threading
 import time
 
@@ -295,6 +296,104 @@ def ib_auto_node_kr01(curve_points, valuation, expiry, spot, strike, vol, pv_div
         })
     return base_px, base_rate, converted, pd.DataFrame(rows)
 
+
+
+def _imm_add_months(start, months):
+    idx = start.year * 12 + (start.month - 1) + months
+    year, month0 = divmod(idx, 12)
+    return third_wednesday(year, month0 + 1)
+
+
+def gate42_forward_mapping(portfolio_rho, valuation, expiry):
+    """
+    Research-only Gate 4B-2 mapping.
+    Uses the fixed-input IB measurements from 28-09-2026 as the option forward-KR01 shape,
+    then fits available 3M Euribor futures periods while preserving aggregate KR01.
+    """
+    measured = [
+        (date(2026, 9, 28), date(2026, 10, 30), 0.25, "FRONT"),
+        (date(2026, 10, 30), date(2026, 11, 30), 0.26, "Oct→Nov"),
+        (date(2026, 11, 30), date(2026, 12, 30), 0.25, "Nov→Dec"),
+        (date(2026, 12, 30), date(2027, 3, 30), 0.76, "Dec→Mar"),
+        (date(2027, 3, 30), date(2027, 6, 30), 0.78, "Mar→Jun"),
+        (date(2027, 6, 30), date(2027, 9, 17), 0.66, "Jun→expiry"),
+    ]
+    measured_total = sum(x[2] for x in measured)
+    target_kr01 = abs(float(portfolio_rho)) / 100.0
+
+    specs = [
+        ("Oct-26", 2026, 10, "SERIAL"),
+        ("Nov-26", 2026, 11, "SERIAL"),
+        ("Dec-26", 2026, 12, "QUARTER"),
+        ("Mar-27", 2027, 3, "QUARTER"),
+        ("Jun-27", 2027, 6, "QUARTER"),
+        ("Sep-27", 2027, 9, "QUARTER"),
+    ]
+    fut_starts = [third_wednesday(y, m) for _, y, m, _ in specs]
+    fut_ends = [_imm_add_months(s, 3) for s in fut_starts]
+    horizon = max(fut_ends)
+    days = [valuation + timedelta(days=i) for i in range(max((horizon - valuation).days, 1))]
+
+    target = np.zeros(len(days), dtype=float)
+    for bucket_start, bucket_end, measured_abs, _ in measured:
+        lo = max(bucket_start, valuation)
+        hi = min(bucket_end, expiry)
+        if hi <= lo:
+            continue
+        bucket_target = target_kr01 * measured_abs / measured_total
+        n = (hi - lo).days
+        for i, d in enumerate(days):
+            if lo <= d < hi:
+                target[i] += bucket_target / n
+
+    A = np.zeros((len(days), len(specs)), dtype=float)
+    for j, (f_start, f_end) in enumerate(zip(fut_starts, fut_ends)):
+        n = max((f_end - f_start).days, 1)
+        for i, d in enumerate(days):
+            if f_start <= d < f_end:
+                A[i, j] = 25.0 / n
+
+    required_lots = target_kr01 / 25.0
+    C = np.ones((1, len(specs)), dtype=float)
+    kkt = np.block([[A.T @ A, C.T], [C, np.zeros((1, 1))]])
+    rhs = np.concatenate([A.T @ target, np.array([required_lots])])
+    continuous = np.linalg.solve(kkt, rhs)[:len(specs)]
+
+    rounded = np.rint(continuous).astype(int)
+    lot_gap = int(round(required_lots - rounded.sum()))
+    if lot_gap:
+        frac = continuous - np.floor(continuous)
+        order = np.argsort(-frac if lot_gap > 0 else frac)
+        for j in order[:abs(lot_gap)]:
+            rounded[j] += 1 if lot_gap > 0 else -1
+
+    base = np.array([0, 0, 60, 60, 60, 60], dtype=float) * (target_kr01 / 6000.0)
+    base_residual = target - A @ base
+    analysed_residual = target - A @ rounded.astype(float)
+    base_rmse = float(np.sqrt(np.mean(base_residual ** 2)))
+    analysed_rmse = float(np.sqrt(np.mean(analysed_residual ** 2)))
+    improvement = (1.0 - analysed_rmse / base_rmse) * 100.0 if base_rmse > 0 else float("nan")
+
+    direction = "SELL" if float(portfolio_rho) < 0 else "BUY"
+    rows = []
+    for i, (name, _, _, kind) in enumerate(specs):
+        rows.append({
+            "Contract": name,
+            "Type": kind,
+            "Direction": direction,
+            "Model lots": float(continuous[i]),
+            "Rounded lots": int(rounded[i]),
+            "Base lots": float(base[i]),
+        })
+    return {
+        "rows": pd.DataFrame(rows),
+        "measured_total": measured_total,
+        "target_kr01": target_kr01,
+        "base_rmse": base_rmse,
+        "analysed_rmse": analysed_rmse,
+        "improvement_pct": improvement,
+        "parallel_residual": float(target.sum() - (A @ rounded.astype(float)).sum()),
+    }
 
 class IBOptionSnapshot(EWrapper, EClient):
     def __init__(self):
@@ -992,7 +1091,7 @@ if source == "TWS / IB GATEWAY" and ib and model:
                 "GATE 4B-1 CONTROL NOG NIET PASS · streaming en calculateOptionPrice gebruiken hier niet exact dezelfde modelcontext."
             )
 
-    st.markdown("#### FIXED INPUT KEY-RATE A/B · V1.7.0")
+    st.markdown("#### FIXED INPUT KEY-RATE A/B · V1.8.0")
     st.caption(
         "Voor bucket-KR01 houden we SX5E en IV exact vast. Alleen jij verandert tussen A en B één TWS-rentenode met +1 bp. "
         "Zo kan marktbeweging de meting niet vervuilen."
@@ -1248,6 +1347,51 @@ if r and source == "TWS / IB GATEWAY":
         )
 
 
+
+if source == "TWS / IB GATEWAY":
+    st.markdown('<div class="section">4B-2 · FORWARD → EURIBOR MAPPING</div>', unsafe_allow_html=True)
+    st.caption(
+        "Geen nieuwe handmatige TWS-tests. Dit model gebruikt uitsluitend de zes reeds gemeten fixed-input "
+        "forward-KR01 blokken en legt daar de echte 3M Euribor-perioden overheen. Base blijft locked."
+    )
+    if valuation == date(2026, 9, 28) and expiry == date(2027, 9, 17):
+        try:
+            g42 = gate42_forward_mapping(float(portfolio_rho), valuation, expiry)
+            g1, g2, g3 = st.columns(3)
+            g1.metric("Target KR01", f"€ {g42['target_kr01']:,.0f}/bp")
+            g2.metric("Base shape error", f"{g42['base_rmse']:.2f}")
+            g3.metric("Mapped shape error", f"{g42['analysed_rmse']:.2f}",
+                      f"{g42['improvement_pct']:.1f}% lager")
+
+            g42_display = g42["rows"].copy()
+            st.dataframe(
+                g42_display,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Model lots": st.column_config.NumberColumn("Model lots", format="%.1f"),
+                    "Rounded lots": st.column_config.NumberColumn("Rounded", format="%d"),
+                    "Base lots": st.column_config.NumberColumn("Base", format="%.1f"),
+                },
+            )
+            st.success(
+                f"GATE 4B-2 MODEL TEST · aggregate KR01 blijft neutraal na afronding "
+                f"(residual € {g42['parallel_residual']:+.2f}/bp) en de forward-shape error daalt "
+                f"{g42['improvement_pct']:.1f}% versus Base."
+            )
+            st.info(
+                "RESEARCH ONLY · dit is nog niet de Analysed Hedge in de hoofdapp. "
+                "De uitkomst test de mapping van gemeten option-forward-rho naar overlappende 3M Euribor futures. "
+                "Base 60/60/60/60 blijft ongewijzigd."
+            )
+        except Exception as e:
+            st.warning(f"Gate 4B-2 mapping kon niet worden berekend: {e}")
+    else:
+        st.warning(
+            "Gate 4B-2 is bewust bevroren op de gevalideerde testcase: valuation 28-09-2026, "
+            "option expiry 17-09-2027. Andere data krijgen geen schijnprecisie."
+        )
+
 if r and source == "TWS / IB GATEWAY" and ib and model.get("optPrice") is not None:
     st.markdown('<div class="section">5 · GATE 4B · PRICING ASSUMPTIONS</div>', unsafe_allow_html=True)
     st.caption(
@@ -1483,4 +1627,4 @@ st.markdown(
     "**Gate 4B-1** IB pricing-rate/curve + IB repricing validation · **Gate 4B-2** Euribor hedge mapping/basis.  "
     "De €600k onderzoeksportefeuille wordt pas daarna gekoppeld. Pas na alle gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V1.7.0 · research only")
+st.caption("ATLAS RHO · KR01 LAB V1.8.0 · research only")
