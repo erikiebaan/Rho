@@ -188,13 +188,13 @@ def diff_text(b,a):
     d=int(a)-int(b)
     return f"+{d} richting SELL" if d>0 else f"{abs(d)} richting BUY" if d<0 else "0"
 
+st.set_page_config(page_title="ATLAS RHO Mobile",page_icon="◼",layout="centered",initial_sidebar_state="collapsed")
+
 try:
     engine_integrity_check()
 except Exception as exc:
     st.error(f"ENGINE LOCK FAILED · {exc}")
     st.stop()
-
-st.set_page_config(page_title="ATLAS RHO Mobile",page_icon="◼",layout="centered",initial_sidebar_state="collapsed")
 st.markdown("""
 <style>
 :root{--bg:#06101a;--panel:#0b1825;--line:#173b5c;--text:#f2f6fb;--muted:#8fa4b8;--red:#ff7078;--green:#5de4b3;--amber:#ffd267}
