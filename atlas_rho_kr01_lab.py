@@ -187,6 +187,113 @@ def solve_effective_flat_rate(target_px, spot, strike, vol, pv_div, curve, right
     return mid, gap(mid)
 
 
+IB_AUTO_EUR_SCREENSHOT_20260928 = [
+    {"Date": date(2026, 9, 28), "Auto %": -0.408},
+    {"Date": date(2026, 9, 29), "Auto %": 2.476},
+    {"Date": date(2026, 9, 30), "Auto %": 2.501},
+    {"Date": date(2026, 10, 1), "Auto %": 2.406},
+    {"Date": date(2026, 10, 7), "Auto %": 2.512},
+    {"Date": date(2026, 10, 14), "Auto %": 2.510},
+    {"Date": date(2026, 10, 21), "Auto %": 2.511},
+    {"Date": date(2026, 10, 30), "Auto %": 2.501},
+    {"Date": date(2026, 11, 30), "Auto %": 2.697},
+    {"Date": date(2026, 12, 30), "Auto %": 2.874},
+    {"Date": date(2027, 3, 30), "Auto %": 3.327},
+    {"Date": date(2027, 9, 30), "Auto %": 3.420},
+    {"Date": date(2027, 12, 30), "Auto %": 3.417},
+    {"Date": date(2028, 3, 30), "Auto %": 3.431},
+    {"Date": date(2028, 6, 30), "Auto %": 3.428},
+    {"Date": date(2028, 9, 29), "Auto %": 3.570},
+    {"Date": date(2029, 3, 29), "Auto %": 3.610},
+    {"Date": date(2029, 9, 28), "Auto %": 3.610},
+]
+
+
+def simple360_node_to_continuous(rate_pct, valuation, node_date):
+    """Convert a simple ACT/360 spot-to-date rate to a continuous ACT/365 rate."""
+    days = (node_date - valuation).days
+    if days <= 0:
+        return None
+    growth = 1.0 + float(rate_pct) / 100.0 * days / 360.0
+    if growth <= 0:
+        raise ValueError("IB Auto rate geeft een ongeldige discount factor.")
+    return math.log(growth) / (days / 365.0)
+
+
+def ib_auto_expiry_rate(curve_points, valuation, expiry):
+    """
+    Research approximation of IB's documented conversion:
+    simple 360-day table -> exponential spot-to-date rates.
+    We linearly interpolate the converted exponential rate to option expiry.
+    """
+    x = curve_points.copy()
+    x["Date"] = pd.to_datetime(x["Date"]).dt.date
+    x["Auto %"] = pd.to_numeric(x["Auto %"], errors="raise")
+    x = x.sort_values("Date").drop_duplicates("Date", keep="last")
+    x = x[x["Date"] > valuation].copy()
+    if x.empty:
+        raise ValueError("Geen IB Auto nodes na valuation date.")
+
+    x["Continuous %"] = [
+        simple360_node_to_continuous(r, valuation, d) * 100.0
+        for d, r in zip(x["Date"], x["Auto %"])
+    ]
+
+    before = x[x["Date"] <= expiry]
+    after = x[x["Date"] >= expiry]
+    if before.empty or after.empty:
+        raise ValueError("IB Auto curve moet option expiry aan beide kanten omsluiten.")
+
+    left = before.iloc[-1]
+    right_node = after.iloc[0]
+    if left["Date"] == right_node["Date"]:
+        expiry_cont_pct = float(left["Continuous %"])
+    else:
+        span = (right_node["Date"] - left["Date"]).days
+        w = (expiry - left["Date"]).days / span
+        expiry_cont_pct = float(left["Continuous %"]) + w * (
+            float(right_node["Continuous %"]) - float(left["Continuous %"])
+        )
+    return expiry_cont_pct, x, left, right_node
+
+
+def option_price_from_continuous_rate(spot, strike, vol, pv_div, valuation, expiry, right, rate_pct):
+    T = max((expiry - valuation).days / 365.0, 1e-9)
+    R = float(rate_pct) / 100.0 * T
+    df = math.exp(-R)
+    prepaid = spot - pv_div
+    if prepaid <= 0:
+        raise ValueError("Spot - PV dividends moet positief zijn.")
+    forward = prepaid / df
+    sigt = vol * math.sqrt(T)
+    d1 = (math.log(forward / strike) + 0.5 * vol * vol * T) / sigt
+    d2 = d1 - sigt
+    if right.upper() == "C":
+        return df * (forward * norm.cdf(d1) - strike * norm.cdf(d2))
+    return df * (strike * norm.cdf(-d2) - forward * norm.cdf(-d1))
+
+
+def ib_auto_node_kr01(curve_points, valuation, expiry, spot, strike, vol, pv_div, right, multiplier, position):
+    base_rate, converted, _, _ = ib_auto_expiry_rate(curve_points, valuation, expiry)
+    base_px = option_price_from_continuous_rate(
+        spot, strike, vol, pv_div, valuation, expiry, right, base_rate
+    )
+    rows = []
+    for i, row in curve_points.reset_index(drop=True).iterrows():
+        bumped = curve_points.reset_index(drop=True).copy()
+        bumped.loc[i, "Auto %"] = float(bumped.loc[i, "Auto %"]) + 0.01
+        bumped_rate, _, _, _ = ib_auto_expiry_rate(bumped, valuation, expiry)
+        bumped_px = option_price_from_continuous_rate(
+            spot, strike, vol, pv_div, valuation, expiry, right, bumped_rate
+        )
+        rows.append({
+            "IB node": row["Date"],
+            "Auto %": float(row["Auto %"]),
+            "Expiry-rate KR01 €": (bumped_px - base_px) * multiplier * position,
+        })
+    return base_px, base_rate, converted, pd.DataFrame(rows)
+
+
 class IBOptionSnapshot(EWrapper, EClient):
     def __init__(self):
         EClient.__init__(self, self)
@@ -1013,6 +1120,88 @@ if r and source == "TWS / IB GATEWAY" and ib and model.get("optPrice") is not No
             "Nog geen PASS/FAIL. Eerst meten we hoe groot de verschillen werkelijk zijn. "
             "Daarna leggen we samen vast wat voor de Risk Manager materieel is."
         )
+
+
+        st.markdown("#### IB AUTO EUR CURVE · V1.5")
+        st.caption(
+            "De waarden hieronder komen uit de EUR Interest Rate Navigator-screenshot van 28-09-2026. "
+            "IB documenteert deze tabel als simple time-deposit rates op 360-dagenbasis en zet ze intern om "
+            "naar exponentiële spot-to-date rentes. Je kunt de tabel aanpassen als TWS later andere Auto-waarden toont."
+        )
+        ib_curve_default = pd.DataFrame(IB_AUTO_EUR_SCREENSHOT_20260928)
+        ib_curve_edit = st.data_editor(
+            ib_curve_default,
+            use_container_width=True,
+            hide_index=True,
+            num_rows="dynamic",
+            key="ib_auto_eur_curve_v15",
+            column_config={
+                "Date": st.column_config.DateColumn("IB date", format="DD-MM-YY", required=True),
+                "Auto %": st.column_config.NumberColumn("IB Auto %", format="%.3f", step=0.001, required=True),
+            },
+        )
+
+        try:
+            ib_curve_px, ib_expiry_rate, ib_converted, ib_node_risk = ib_auto_node_kr01(
+                ib_curve_edit, valuation, expiry, float(spot), float(strike),
+                float(vol_pct) / 100.0, float(pv_div), right, float(multiplier), int(position),
+            )
+            ib_model_px = float(model["optPrice"])
+            ib_curve_gap = ib_curve_px - ib_model_px
+            ib_curve_gap_pct = abs(ib_curve_gap) / ib_model_px * 100.0 if ib_model_px else float("nan")
+
+            left_candidates = ib_converted[ib_converted["Date"] <= expiry]
+            right_candidates = ib_converted[ib_converted["Date"] >= expiry]
+            left_date = left_candidates.iloc[-1]["Date"]
+            right_date = right_candidates.iloc[0]["Date"]
+
+            u1, u2, u3 = st.columns(3)
+            u1.metric("IB curve → expiry IR*", f"{ib_expiry_rate:.3f}%")
+            u2.metric("Curve model px", f"{ib_curve_px:.3f}")
+            u3.metric("vs IB model", f"{ib_curve_gap:+.3f}", f"{ib_curve_gap_pct:.2f}%")
+
+            st.caption(
+                f"* Research-conversie: simple ACT/360 → exponentieel spot-to-date; expiry ligt tussen "
+                f"{left_date.strftime('%d-%m-%y')} en {right_date.strftime('%d-%m-%y')}. "
+                "IB documenteert de 360→exponential stap, maar niet alle interne interpolatiedetails; "
+                "daarom behandelen we dit als een validatietest, niet als bewezen IB-replicatie."
+            )
+
+            active_nodes = ib_node_risk[ib_node_risk["Expiry-rate KR01 €"].abs() > 0.000001].copy()
+            st.dataframe(
+                active_nodes,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "IB node": st.column_config.DateColumn("IB node", format="DD-MM-YY"),
+                    "Auto %": st.column_config.NumberColumn("Auto %", format="%.3f"),
+                    "Expiry-rate KR01 €": st.column_config.NumberColumn("Expiry-rate KR01", format="€ %.4f"),
+                },
+            )
+            st.warning(
+                "BELANGRIJK · Dit is géén Dec/Mar/Jun/Sep hedge-verdeling. Een Europese optieprijs op één expiry "
+                "ziet uiteindelijk de discount factor naar die expiry. De IB Auto-curve helpt ons de prijsrente te "
+                "valideren, maar bewijst niet zelfstandig hoeveel KR01 in elk Euribor-kwartaal hoort."
+            )
+
+            exact_ir_text = st.text_input(
+                "IB IR op option expiry (optioneel)",
+                value="",
+                placeholder="bijv. 3.193",
+                help="Als Model Navigator bij de geladen expiry een IR-waarde toont, vul die hier in. Dan vergelijken we IB's exacte expiry-IR met onze curveconversie.",
+            ).strip().replace(",", ".")
+            if exact_ir_text:
+                exact_ir = float(exact_ir_text)
+                exact_px = option_price_from_continuous_rate(
+                    float(spot), float(strike), float(vol_pct) / 100.0, float(pv_div),
+                    valuation, expiry, right, exact_ir,
+                )
+                e1, e2, e3 = st.columns(3)
+                e1.metric("IB displayed IR", f"{exact_ir:.3f}%")
+                e2.metric("Our converted IR", f"{ib_expiry_rate:.3f}%")
+                e3.metric("Price with IB IR", f"{exact_px:.3f}")
+        except Exception as e:
+            st.warning(f"IB Auto curve research kon niet worden berekend: {e}")
     except Exception as e:
         st.warning(f"Gate 4B research kon niet worden berekend: {e}")
 
@@ -1023,4 +1212,4 @@ st.markdown(
     "**Gate 4B** pricing-rente/dividend robustness + Euribor hedge mapping.  "
     "De €600k onderzoeksportefeuille wordt pas daarna gekoppeld. Pas na alle gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V1.4 · research only")
+st.caption("ATLAS RHO · KR01 LAB V1.5 · research only")
