@@ -198,7 +198,7 @@ h1{font-size:1.65rem!important;margin:0!important;line-height:1.1}
 .kl{font-size:.57rem;color:#8fa4b8;font-weight:900;letter-spacing:.05em}.kv{font-size:1.05rem;color:#f4f7fb;font-weight:900;margin-top:.08rem}
 .maprow{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:.5rem .62rem;margin:.28rem 0}
 .maptop{display:flex;justify-content:space-between;gap:.5rem;font-size:.76rem;font-weight:850}.mapbot{color:#91a8bd;font-size:.66rem;margin-top:.18rem}
-.rule{background:#09131d;border:1px solid #173653;border-radius:10px;padding:.65rem .72rem;color:#c9d6e2;font-size:.72rem;margin:.35rem 0}
+.rule{background:#09131d;border:1px solid #173653;border-radius:10px;padding:.65rem .72rem;color:#c9d6e2;font-size:.72rem;margin:.35rem 0}\n.curveh{display:grid;grid-template-columns:1fr 74px 74px;gap:.35rem;padding:.1rem .55rem .25rem;color:#70879c;font-size:.57rem;font-weight:900;letter-spacing:.08em}.curver{display:grid;grid-template-columns:1fr 74px 74px;gap:.35rem;align-items:center;background:#0b1825;border:1px solid #173b5c;border-radius:9px;padding:.45rem .55rem;margin:.22rem 0;font-size:.72rem}.cv{text-align:right;font-weight:850}.cb{color:#8fc8ff}.ca{color:#f2f6fb}
 div[data-testid="stMetric"]{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px}
 div[data-testid="stMetricLabel"]{color:#9db1c4!important}
 div[data-testid="stMetricValue"]{color:#f2f6fb!important}
@@ -297,16 +297,15 @@ with tabs[0]:
 
 with tabs[2]:
     st.markdown('<div class="section">CURVE · BASE VS ANALYSED</div>',unsafe_allow_html=True)
-    df=pd.DataFrame({
-        "Contract":[c[0] for c in result["contracts"]],
-        "Base":result["base"],"Analysed":result["analysed"]
-    }).set_index("Contract")
-    st.line_chart(df,use_container_width=True,height=250)
-    with st.expander("Exacte vergelijking"):
+    st.markdown('<div class="curveh"><span>CONTRACT</span><span style="text-align:right">BASE</span><span style="text-align:right">ANALYSED</span></div>',unsafe_allow_html=True)
+    for (contract,kind),b,a in zip(result["contracts"],result["base"],result["analysed"]):
+        st.markdown(
+            f'<div class="curver"><b>{contract}</b><span class="cv cb">{lot_text(b)}</span><span class="cv ca">{lot_text(a)}</span></div>',
+            unsafe_allow_html=True
+        )
+    with st.expander("Wat verandert er precies?"):
         comp=pd.DataFrame({
-            "Contract":[c[0] for c in result["contracts"]],
-            "Base":[lot_text(x) for x in result["base"]],
-            "Analysed":[lot_text(x) for x in result["analysed"]],
+            "Contract":[x[0] for x in result["contracts"]],
             "Verschil":[diff_text(b,a) for b,a in zip(result["base"],result["analysed"])]
         })
         st.dataframe(comp,use_container_width=True,hide_index=True)
@@ -329,7 +328,7 @@ with tabs[3]:
         f'Nu: {euro(result["benefit"])} en {result["robustness"]:.1f}%.</div>',
         unsafe_allow_html=True
     )
-    st.info("20% is een stresstest, geen gemeten foutpercentage. UITVOEREN is geen derde hedge: het toont exact de gekozen BASE- of ANALYSED-hedge.")
+    st.markdown('<div class="rule"><b>BELANGRIJK</b><br>20% is een stresstest, geen gemeten foutpercentage. UITVOEREN is geen derde hedge: het toont exact de gekozen BASE- of ANALYSED-hedge.</div>',unsafe_allow_html=True)
     with st.expander("Stress-scenario's"):
         scen=pd.DataFrame({
             "Scenario":[x[0] for x in result["base_scen"]],
