@@ -61,8 +61,11 @@ def locked_v17_base(exposures, valuation=VALUATION):
     horizons=[hedge_quarter(d) for d,_ in exposures]
     qs=quarter_strip(valuation,max(horizons))
     kr01={q:0.0 for q in qs}; detail=[]
+    front=qs[0]
     for d,rho in exposures:
-        h=hedge_quarter(d)
+        # Same roll-edge rule as the canonical V17 engine: if a rho bucket
+        # falls in/past the rolled quarter, carry it into the first available future.
+        h=max(front,hedge_quarter(d))
         eligible=[q for q in qs if q<=h]
         hedge=-float(rho)/100.0
         alloc=hedge/len(eligible)
