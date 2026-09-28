@@ -297,7 +297,9 @@ def robustness(exposures,true_target,contracts):
 
 @st.cache_data(show_spinner=False)
 def evaluate(months,values):
-    exposures=[(parse_month(m),float(v)) for m,v in zip(months,values)]
+    # Blank mobile editor cells mean zero exposure; never let None/NaN reach the hedge engine.
+    clean_values=[0.0 if pd.isna(v) else float(v) for v in values]
+    exposures=[(parse_month(m),v) for m,v in zip(months,clean_values)]
     contracts,target,a=analysed_target_and_lots(exposures)
     b,detail=align_base(exposures,contracts)
     bs,bw=scenario_values(target,b); ans,aw=scenario_values(target,a)
@@ -382,10 +384,12 @@ with tabs[1]:
             "Rho / +100 bp":st.column_config.NumberColumn(format="€ %.0f",step=10000)
         },key="editor08"
     )
+    # On iPhone, deleting a number produces None. Interpret an empty Rho cell as €0.
+    edited["Rho / +100 bp"]=pd.to_numeric(edited["Rho / +100 bp"],errors="coerce").fillna(0.0)
     st.session_state.rho08=edited
     if st.button("HERBEREKEN",type="primary",use_container_width=True):
         st.cache_data.clear()
-    result=evaluate(tuple(edited["Maand"]),tuple(float(x) for x in edited["Rho / +100 bp"]))
+    result=evaluate(tuple(edited["Maand"]),tuple(edited["Rho / +100 bp"]))
     net=float(edited["Rho / +100 bp"].sum())
     gross=float(edited["Rho / +100 bp"].abs().sum())
     st.markdown(
@@ -397,7 +401,7 @@ with tabs[1]:
         f'</div>',unsafe_allow_html=True
     )
     with st.expander("BASE MAPPING · toon uitleg"):
-        current_rows=list(zip(edited["Maand"].tolist(),[float(x) for x in edited["Rho / +100 bp"]]))
+        current_rows=list(zip(edited["Maand"].tolist(),edited["Rho / +100 bp"].astype(float).tolist()))
         for (m,rho),(h,eligible,alloc) in zip(current_rows,result["base_detail"]):
             direction="SELL" if alloc>0 else "BUY"
             st.markdown(
