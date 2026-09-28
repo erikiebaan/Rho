@@ -145,6 +145,48 @@ def bucketed_kr01(spot, strike, vol, pv_div, curve, right, multiplier, position,
     return base, pd.DataFrame(rows)
 
 
+def flat_curve_from(curve, rate_pct):
+    x = curve.copy()
+    x["Forward %"] = float(rate_pct)
+    return x
+
+
+def solve_effective_flat_rate(target_px, spot, strike, vol, pv_div, curve, right):
+    """Back-solve one flat rate that reproduces a target option price, conditional on PV dividends."""
+    lo, hi = -5.0, 15.0
+    def gap(rate_pct):
+        return option_price_points(
+            spot, strike, vol, pv_div, flat_curve_from(curve, rate_pct), right
+        ) - target_px
+
+    flo, fhi = gap(lo), gap(hi)
+    if abs(flo) < 1e-10:
+        return lo, flo
+    if abs(fhi) < 1e-10:
+        return hi, fhi
+    if flo * fhi > 0:
+        # No exact root in a broad practical range: return best grid fit, clearly labelled by its residual.
+        best_rate, best_gap = None, None
+        for n in range(401):
+            rate = lo + (hi - lo) * n / 400.0
+            g = gap(rate)
+            if best_gap is None or abs(g) < abs(best_gap):
+                best_rate, best_gap = rate, g
+        return best_rate, best_gap
+
+    for _ in range(80):
+        mid = (lo + hi) / 2.0
+        fm = gap(mid)
+        if abs(fm) < 1e-12:
+            return mid, fm
+        if flo * fm <= 0:
+            hi, fhi = mid, fm
+        else:
+            lo, flo = mid, fm
+    mid = (lo + hi) / 2.0
+    return mid, gap(mid)
+
+
 class IBOptionSnapshot(EWrapper, EClient):
     def __init__(self):
         EClient.__init__(self, self)
@@ -827,10 +869,94 @@ if r and source == "TWS / IB GATEWAY":
             "Basis/convexity en de front stub moeten nog worden gevalideerd vóór Analysed Hedge."
         )
 
+
+if r and source == "TWS / IB GATEWAY" and ib and model.get("optPrice") is not None:
+    st.markdown('<div class="section">5 · GATE 4B · PRICING ASSUMPTIONS</div>', unsafe_allow_html=True)
+    st.caption(
+        "Jip: dezelfde optie kan met een andere rente/dividend-aanname worden geprijsd. "
+        "Hier testen we of de KR01-verdeling dan stabiel blijft. Dit verandert de Base Hedge niet."
+    )
+    try:
+        research_curve = validate_curve(curve_edit, valuation, expiry)
+        ib_effective_rate, ib_fit_gap = solve_effective_flat_rate(
+            float(model["optPrice"]), float(spot), float(strike), float(vol_pct) / 100.0,
+            float(pv_div), research_curve, right,
+        )
+
+        q1, q2 = st.columns(2)
+        q1.metric("IB-implied effective rate*", f"{ib_effective_rate:.3f}%")
+        q2.metric("Fit gap", f"{ib_fit_gap:+.4f} pt")
+        st.caption(
+            "* Teruggerekend uit IB modelprijs met de huidige IB PV-dividends. "
+            "Dit is NIET de echte IB rentecurve; het is één effectieve controle-rente."
+        )
+
+        a1, a2 = st.columns(2)
+        abn_rate = a1.number_input(
+            "ABN rate % (manual research)",
+            value=float(round(ib_effective_rate, 3)),
+            step=0.01,
+            format="%.3f",
+            help="Vul hier later de rente uit ABN AMRO Clearing in.",
+        )
+        abn_pv_div = a2.number_input(
+            "ABN / alternative PV dividends",
+            value=float(pv_div),
+            step=1.0,
+            format="%.2f",
+            help="Zo kunnen we rente en dividend apart stressen in plaats van ze door elkaar te halen.",
+        )
+
+        ib_curve = flat_curve_from(research_curve, ib_effective_rate)
+        abn_curve = flat_curve_from(research_curve, abn_rate)
+        _, ib_kr = bucketed_kr01(
+            float(spot), float(strike), float(vol_pct) / 100.0, float(pv_div), ib_curve,
+            right, float(multiplier), int(position), bump_bp=1.0,
+        )
+        abn_px, abn_kr = bucketed_kr01(
+            float(spot), float(strike), float(vol_pct) / 100.0, float(abn_pv_div), abn_curve,
+            right, float(multiplier), int(position), bump_bp=1.0,
+        )
+        ib_total = float(ib_kr["KR01 €"].sum())
+        abn_total = float(abn_kr["KR01 €"].sum())
+
+        comp = pd.DataFrame({
+            "Bucket": ib_kr["Bucket"],
+            "IB-implied KR01": ib_kr["KR01 €"],
+            "ABN/manual KR01": abn_kr["KR01 €"],
+        })
+        comp["Difference"] = comp["ABN/manual KR01"] - comp["IB-implied KR01"]
+        comp["IB weight %"] = comp["IB-implied KR01"] / ib_total * 100.0 if abs(ib_total) > 1e-12 else float("nan")
+        comp["ABN weight %"] = comp["ABN/manual KR01"] / abn_total * 100.0 if abs(abn_total) > 1e-12 else float("nan")
+
+        s1, s2, s3 = st.columns(3)
+        s1.metric("IB-implied KR01", f"€ {ib_total:,.2f}/bp")
+        s2.metric("ABN/manual KR01", f"€ {abn_total:,.2f}/bp")
+        delta_pct = ((abn_total / ib_total) - 1.0) * 100.0 if abs(ib_total) > 1e-12 else float("nan")
+        s3.metric("KR01 difference", f"{delta_pct:+.2f}%")
+        st.dataframe(
+            comp,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "IB-implied KR01": st.column_config.NumberColumn("IB-implied €/bp", format="€ %.3f"),
+                "ABN/manual KR01": st.column_config.NumberColumn("ABN/manual €/bp", format="€ %.3f"),
+                "Difference": st.column_config.NumberColumn("Difference", format="€ %+.3f"),
+                "IB weight %": st.column_config.NumberColumn("IB weight", format="%.1f%%"),
+                "ABN weight %": st.column_config.NumberColumn("ABN weight", format="%.1f%%"),
+            },
+        )
+        st.caption(
+            f"ABN/manual model price: {abn_px:.3f}. "
+            "Nog geen PASS/FAIL: eerst echte ABN-input invullen en daarna bepalen hoeveel verschil wij acceptabel vinden."
+        )
+    except Exception as e:
+        st.warning(f"Gate 4B research kon niet worden berekend: {e}")
+
 st.markdown('<div class="section">VALIDATION GATES</div>', unsafe_allow_html=True)
 st.markdown(
     "**Gate 1** contract + IB modeldata · **Gate 2** eigen option price versus IB model · "
     "**Gate 3** bucketed KR01 van de optie · **Gate 4A** FEU3 instrument/period mapping · **Gate 4B** discount/OIS→Euribor basis/convexity.  "
     "De €600k onderzoeksportefeuille wordt pas daarna gekoppeld. Pas na alle gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V1.2 · research only")
+st.caption("ATLAS RHO · KR01 LAB V1.3 · research only")
