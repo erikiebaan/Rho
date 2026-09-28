@@ -1436,4 +1436,4 @@ st.markdown(
     "**Gate 4B-1** IB pricing-rate/curve + IB repricing validation · **Gate 4B-2** Euribor hedge mapping/basis.  "
     "De €600k onderzoeksportefeuille wordt pas daarna gekoppeld. Pas na alle gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V1.6.2 · research only")
+st.caption("ATLAS RHO · KR01 LAB V1.6.3 · research only")
