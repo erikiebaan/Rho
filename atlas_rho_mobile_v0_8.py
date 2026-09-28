@@ -170,23 +170,44 @@ def diff_text(b,a):
     d=int(a)-int(b)
     return f"+{d} richting SELL" if d>0 else f"{abs(d)} richting BUY" if d<0 else "0"
 
-st.set_page_config(page_title="ATLAS RHO Mobile 0.8",page_icon="◼",layout="centered",initial_sidebar_state="collapsed")
+st.set_page_config(page_title="ATLAS RHO Mobile",page_icon="◼",layout="centered",initial_sidebar_state="collapsed")
 st.markdown("""
 <style>
-.stApp{background:#07111b;color:#eef5ff}.block-container{max-width:760px;padding:.75rem .8rem 5rem}
-header[data-testid="stHeader"]{background:transparent}#MainMenu,footer,[data-testid='stToolbar']{display:none!important}
-h1{font-size:1.7rem!important;margin-bottom:0!important}.sub{color:#86a0b8;font-size:.7rem;letter-spacing:.12em;margin:.1rem 0 .8rem}
-.lock{background:#0b211d;border:1px solid #174638;color:#55e2b1;border-radius:12px;padding:.65rem .8rem;font-size:.72rem;font-weight:700}
-.section{font-size:.72rem;letter-spacing:.1em;color:#a8c8e7;font-weight:800;margin:1rem 0 .45rem}
-.db{border-radius:14px;padding:1rem;text-align:center;font-size:1.55rem;font-weight:900}
-.base{background:#332608;border:1px solid #a77811;color:#ffd267}.ana{background:#0b3328;border:1px solid #1b8c69;color:#5de4b3}
-.good{background:#0a2a24;border:1px solid #167b60;border-radius:12px;padding:.75rem}.bad{background:#291219;border:1px solid #7f2635;border-radius:12px;padding:.75rem}
-.gl{font-size:.65rem;color:#c5d2df;font-weight:800}.gv{font-size:1.3rem;font-weight:900}
-.reason{background:#09131d;border:1px solid #173653;border-radius:12px;padding:.8rem;color:#c5d2df;font-size:.78rem;margin-top:.5rem}
-.order{display:flex;justify-content:space-between;align-items:center;background:#0b1825;border:1px solid #173b5c;border-radius:12px;padding:.72rem .8rem;margin:.35rem 0}
-.sell{color:#ff7078;font-weight:900}.buy{color:#49e0b0;font-weight:900}.qty{font-size:1.15rem;font-weight:900}
-div[data-testid="stMetric"]{background:#0b1825;border:1px solid #173b5c;border-radius:12px;padding:10px}
-.stButton>button{border-radius:12px;min-height:44px;font-weight:800}[data-testid="stDataFrame"]{border:1px solid #173653;border-radius:12px;overflow:hidden}
+:root{--bg:#06101a;--panel:#0b1825;--line:#173b5c;--text:#f2f6fb;--muted:#8fa4b8;--red:#ff7078;--green:#5de4b3;--amber:#ffd267}
+.stApp{background:var(--bg);color:var(--text)}
+.block-container{max-width:760px;padding:.65rem .75rem 4rem}
+header[data-testid="stHeader"]{background:transparent}
+#MainMenu,footer,[data-testid='stToolbar']{display:none!important}
+h1{font-size:1.65rem!important;margin:0!important;line-height:1.1}
+.sub{color:var(--muted);font-size:.66rem;letter-spacing:.13em;margin:.18rem 0 .65rem}
+.lock{background:#0b211d;border:1px solid #174638;color:#62deb5;border-radius:10px;padding:.52rem .7rem;font-size:.66rem;font-weight:800;margin-bottom:.45rem}
+.section{font-size:.68rem;letter-spacing:.1em;color:#a9c4df;font-weight:900;margin:.8rem 0 .38rem}
+.db{border-radius:12px;padding:.65rem .8rem;text-align:center;font-size:1.25rem;font-weight:900;margin:.15rem 0 .45rem}
+.base{background:#332608;border:1px solid #a77811;color:var(--amber)}
+.ana{background:#0b3328;border:1px solid #1b8c69;color:var(--green)}
+.gates{display:grid;grid-template-columns:1fr 1fr;gap:.45rem;margin:.25rem 0}
+.gate{border-radius:10px;padding:.55rem .62rem;min-height:74px}
+.good{background:#0a2a24;border:1px solid #167b60}.bad{background:#291219;border:1px solid #7f2635}
+.gl{font-size:.58rem;color:#b9c9d8;font-weight:900;letter-spacing:.04em}.gv{font-size:1.05rem;font-weight:900;margin:.08rem 0}.gs{font-size:.67rem;color:#c5d2df}
+.reason{background:#09131d;border:1px solid #173653;border-radius:10px;padding:.6rem .7rem;color:#c5d2df;font-size:.72rem;margin:.4rem 0 .55rem}
+.order-head{display:grid;grid-template-columns:1fr 64px 48px;gap:.35rem;padding:0 .65rem .2rem;color:#6f879d;font-size:.57rem;font-weight:900;letter-spacing:.08em}
+.order{display:grid;grid-template-columns:1fr 64px 48px;gap:.35rem;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:.48rem .65rem;margin:.25rem 0}
+.contract{font-size:.82rem;font-weight:800}.sell{color:var(--red);font-weight:900;font-size:.72rem}.buy{color:var(--green);font-weight:900;font-size:.72rem}.qty{font-size:.98rem;font-weight:900;text-align:right}
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin:.45rem 0}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:.58rem .65rem}
+.kl{font-size:.57rem;color:#8fa4b8;font-weight:900;letter-spacing:.05em}.kv{font-size:1.05rem;color:#f4f7fb;font-weight:900;margin-top:.08rem}
+.maprow{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:.5rem .62rem;margin:.28rem 0}
+.maptop{display:flex;justify-content:space-between;gap:.5rem;font-size:.76rem;font-weight:850}.mapbot{color:#91a8bd;font-size:.66rem;margin-top:.18rem}
+.rule{background:#09131d;border:1px solid #173653;border-radius:10px;padding:.65rem .72rem;color:#c9d6e2;font-size:.72rem;margin:.35rem 0}
+div[data-testid="stMetric"]{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px}
+div[data-testid="stMetricLabel"]{color:#9db1c4!important}
+div[data-testid="stMetricValue"]{color:#f2f6fb!important}
+.stButton>button,.stDownloadButton>button{border-radius:10px;min-height:40px;font-weight:800}
+[data-testid="stDataFrame"],[data-testid="stDataEditor"]{border:1px solid #173653;border-radius:10px;overflow:hidden}
+div[data-baseweb="tab-list"]{gap:.1rem}
+button[data-baseweb="tab"]{padding-left:.45rem!important;padding-right:.45rem!important;font-size:.78rem!important}
+[data-testid="stExpander"]{border:1px solid #173653!important;border-radius:10px!important;background:#09131d}
+hr{border-color:#14283a}
 </style>""",unsafe_allow_html=True)
 
 st.title("ATLAS RHO")
@@ -195,63 +216,126 @@ st.markdown('<div class="lock">● LOCKED BASE V17 · ANALYSED V2.2 · 10.000 RU
 
 if "rho08" not in st.session_state:
     st.session_state.rho08=pd.DataFrame(DEFAULT_EXPOSURE,columns=["Maand","Rho / +100 bp"])
-tabs=st.tabs(["RHO","UITVOEREN","CURVE","RISK"])
+
+tabs=st.tabs(["UITVOEREN","RHO","CURVE","RISK"])
+
+# RHO is rendered second, but calculated first so UITVOEREN always uses the current engine result.
+with tabs[1]:
+    st.markdown('<div class="section">RHO EXPOSURE PER MAAND</div>',unsafe_allow_html=True)
+    edited=st.data_editor(
+        st.session_state.rho08,use_container_width=True,hide_index=True,num_rows="fixed",
+        column_config={
+            "Maand":st.column_config.TextColumn(disabled=True),
+            "Rho / +100 bp":st.column_config.NumberColumn(format="€ %.0f",step=10000)
+        },key="editor08"
+    )
+    st.session_state.rho08=edited
+    if st.button("HERBEREKEN",type="primary",use_container_width=True):
+        st.cache_data.clear()
+    result=evaluate(tuple(edited["Maand"]),tuple(float(x) for x in edited["Rho / +100 bp"]))
+    net=float(edited["Rho / +100 bp"].sum())
+    gross=float(edited["Rho / +100 bp"].abs().sum())
+    st.markdown(
+        f'<div class="kpis">'
+        f'<div class="kpi"><div class="kl">NET RHO</div><div class="kv">{euro(net,True)}</div></div>'
+        f'<div class="kpi"><div class="kl">GROSS RHO</div><div class="kv">{euro(gross)}</div></div>'
+        f'<div class="kpi"><div class="kl">BASE CURVE-RISICO</div><div class="kv">{euro(result["base_worst"])}</div></div>'
+        f'<div class="kpi"><div class="kl">ANALYSED CURVE-RISICO</div><div class="kv">{euro(result["analysed_worst"])}</div></div>'
+        f'</div>',unsafe_allow_html=True
+    )
+    with st.expander("BASE MAPPING · toon uitleg"):
+        current_rows=list(zip(edited["Maand"].tolist(),[float(x) for x in edited["Rho / +100 bp"]]))
+        for (m,rho),(h,eligible,alloc) in zip(current_rows,result["base_detail"]):
+            direction="SELL" if alloc>0 else "BUY"
+            st.markdown(
+                f'<div class="maprow"><div class="maptop"><span>{m} · {euro(rho,True)}</span>'
+                f'<span>→ {fmt_month(h)}</span></div>'
+                f'<div class="mapbot">{fmt_month(eligible[0])} → {fmt_month(eligible[-1])} · '
+                f'~{abs(alloc/KR01_PER_FUTURE):.0f} {direction} per kwartaalcontract</div></div>',
+                unsafe_allow_html=True
+            )
 
 with tabs[0]:
-    st.markdown('<div class="section">RHO EXPOSURE PER MAAND</div>',unsafe_allow_html=True)
-    edited=st.data_editor(st.session_state.rho08,use_container_width=True,hide_index=True,num_rows="fixed",
-        column_config={"Maand":st.column_config.TextColumn(disabled=True),
-                       "Rho / +100 bp":st.column_config.NumberColumn(format="€ %.0f",step=10000)},key="editor08")
-    st.session_state.rho08=edited
-    if st.button("HERBEREKEN",type="primary",use_container_width=True): st.cache_data.clear()
-    result=evaluate(tuple(edited["Maand"]),tuple(float(x) for x in edited["Rho / +100 bp"]))
-    net=float(edited["Rho / +100 bp"].sum()); gross=float(edited["Rho / +100 bp"].abs().sum())
-    c1,c2=st.columns(2); c1.metric("NET RHO",euro(net,True)); c2.metric("GROSS RHO",euro(gross))
-    c1,c2=st.columns(2); c1.metric("BASE CURVE-RISICO",euro(result["base_worst"])); c2.metric("ANALYSED CURVE-RISICO",euro(result["analysed_worst"]))
-    st.markdown('<div class="section">BASE MAPPING</div>',unsafe_allow_html=True)
-    rows=[]
-    for i,((m,rho),(h,eligible,alloc)) in enumerate(zip(DEFAULT_EXPOSURE,result["base_detail"])):
-        rows.append({"Maand":m,"Rho":rho,"Hedge horizon":fmt_month(h),
-                     "Base spread":f"{fmt_month(eligible[0])} → {fmt_month(eligible[-1])} · ~{abs(alloc/KR01_PER_FUTURE):.0f} {'SELL' if alloc>0 else 'BUY'} elk"})
-    st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
-
-with tabs[1]:
-    r=result; is_a=r["decision"]=="ANALYSED"
-    st.markdown(f'<div class="db {"ana" if is_a else "base"}">BESLUIT: {r["decision"]}</div>',unsafe_allow_html=True)
-    mat=r["benefit"]>=MATERIALITY_EUR; rob=r["robustness"]>=ROBUSTNESS_MIN
-    c1,c2=st.columns(2)
-    c1.markdown(f'<div class="{"good" if mat else "bad"}"><div class="gl">MATERIEEL VOORDEEL</div><div class="gv">{euro(r["benefit"])}</div><div>grens €10.000 {"✓" if mat else "✕"}</div></div>',unsafe_allow_html=True)
-    c2.markdown(f'<div class="{"good" if rob else "bad"}"><div class="gl">20% SENSITIVITEIT</div><div class="gv">{r["robustness"]:.1f}%</div><div>grens 80% {"✓" if rob else "✕"}</div></div>',unsafe_allow_html=True)
-    reason=("Analysed is materieel én robuust genoeg. Gebruik onderstaande Analysed orderlijst." if is_a else
-            "BASE: het eurovoordeel van Analysed is te klein voor extra curve-complexiteit." if not mat else
-            "BASE: het eurovoordeel is materieel, maar Analysed haalt de 80%-sensitiviteitsgrens niet.")
+    r=result
+    is_a=r["decision"]=="ANALYSED"
+    mat=r["benefit"]>=MATERIALITY_EUR
+    rob=r["robustness"]>=ROBUSTNESS_MIN
+    st.markdown(f'<div class="db {"ana" if is_a else "base"}">BESLUIT · {r["decision"]}</div>',unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="gates">'
+        f'<div class="gate {"good" if mat else "bad"}"><div class="gl">MATERIEEL</div>'
+        f'<div class="gv">{euro(r["benefit"])}</div><div class="gs">grens €10k {"✓" if mat else "✕"}</div></div>'
+        f'<div class="gate {"good" if rob else "bad"}"><div class="gl">20% SENSITIVITEIT</div>'
+        f'<div class="gv">{r["robustness"]:.1f}%</div><div class="gs">grens 80% {"✓" if rob else "✕"}</div></div>'
+        f'</div>',unsafe_allow_html=True
+    )
+    reason=("Analysed is materieel én robuust genoeg." if is_a else
+            "Base blijft leidend: Analysed is niet materieel genoeg." if not mat else
+            "Base blijft leidend: Analysed haalt de 80%-sensitiviteitsgrens niet.")
     st.markdown(f'<div class="reason">{reason}</div>',unsafe_allow_html=True)
-    st.markdown('<div class="section">UITVOEREN · EXACTE HEDGE ORDERS</div>',unsafe_allow_html=True)
-    selected=r["analysed"] if is_a else r["base"]; lines=[]
+
+    st.markdown('<div class="section">NU UITVOEREN</div>',unsafe_allow_html=True)
+    st.markdown('<div class="order-head"><span>CONTRACT</span><span>ACTIE</span><span style="text-align:right">LOTS</span></div>',unsafe_allow_html=True)
+    selected=r["analysed"] if is_a else r["base"]
+    lines=[]
     for (contract,kind),lots in zip(r["contracts"],selected):
-        if not lots: continue
-        action="SELL" if lots>0 else "BUY"; qty=abs(int(lots)); lines.append(f"3M Euribor {contract} | {action} | {qty}")
-        st.markdown(f'<div class="order"><div><b>3M EURIBOR {contract}</b><div class="{"sell" if action=="SELL" else "buy"}">{action}</div></div><div class="qty">{qty}</div></div>',unsafe_allow_html=True)
-    st.download_button("DOWNLOAD ORDERLIJST",data="\n".join(lines),file_name=f"ATLAS_RHO_{r['decision']}_ORDERS.txt",mime="text/plain",use_container_width=True)
+        if not lots:
+            continue
+        action="SELL" if lots>0 else "BUY"
+        qty=abs(int(lots))
+        lines.append(f"3M Euribor {contract} | {action} | {qty}")
+        st.markdown(
+            f'<div class="order"><div class="contract">3M Euribor {contract}</div>'
+            f'<div class="{"sell" if action=="SELL" else "buy"}">{action}</div>'
+            f'<div class="qty">{qty}</div></div>',unsafe_allow_html=True
+        )
+    st.download_button(
+        "ORDERLIJST",data="\n".join(lines),
+        file_name=f"ATLAS_RHO_{r['decision']}_ORDERS.txt",
+        mime="text/plain",use_container_width=True
+    )
 
 with tabs[2]:
-    st.markdown('<div class="section">BASE VS ANALYSED · LOTS</div>',unsafe_allow_html=True)
-    df=pd.DataFrame({"Contract":[c[0] for c in result["contracts"]],"Base":result["base"],"Analysed":result["analysed"]}).set_index("Contract")
-    st.line_chart(df,use_container_width=True,height=320)
-    comp=pd.DataFrame({"Contract":[c[0] for c in result["contracts"]],
-        "Base":[lot_text(x) for x in result["base"]],"Analysed":[lot_text(x) for x in result["analysed"]],
-        "Verschil":[diff_text(b,a) for b,a in zip(result["base"],result["analysed"])]})
-    st.dataframe(comp,use_container_width=True,hide_index=True)
+    st.markdown('<div class="section">CURVE · BASE VS ANALYSED</div>',unsafe_allow_html=True)
+    df=pd.DataFrame({
+        "Contract":[c[0] for c in result["contracts"]],
+        "Base":result["base"],"Analysed":result["analysed"]
+    }).set_index("Contract")
+    st.line_chart(df,use_container_width=True,height=250)
+    with st.expander("Exacte vergelijking"):
+        comp=pd.DataFrame({
+            "Contract":[c[0] for c in result["contracts"]],
+            "Base":[lot_text(x) for x in result["base"]],
+            "Analysed":[lot_text(x) for x in result["analysed"]],
+            "Verschil":[diff_text(b,a) for b,a in zip(result["base"],result["analysed"])]
+        })
+        st.dataframe(comp,use_container_width=True,hide_index=True)
 
 with tabs[3]:
     st.markdown('<div class="section">WAAROM KIEST ATLAS DIT?</div>',unsafe_allow_html=True)
-    st.write("**BASE V17** neemt iedere maand-Rho, bepaalt het hedgekwartaal en verdeelt de DV01 gelijk over alle kwartaal-Euribors vanaf het frontcontract tot en met dat hedgekwartaal.")
-    st.write("**ANALYSED V2.2** gebruikt dezelfde maand-exposure, maar plaatst de hedge-KR01 preciezer op de curve via de maand→IMM mapping, inclusief de twee front serials.")
-    st.write("**Beslisregel:** Analysed alleen bij minimaal €10.000 lager worst-case curve-risico én minimaal 80% robuustheid in 10.000 runs onder 20% Rho-sensitiviteit.")
-    st.info("20% is een stresstest, geen gemeten foutpercentage. UITVOEREN is geen derde hedge: het is exact BASE of ANALYSED.")
-    scen=pd.DataFrame({"Scenario":[x[0] for x in result["base_scen"]],
-        "Base mismatch €":[x[1] for x in result["base_scen"]],
-        "Analysed mismatch €":[x[1] for x in result["analysed_scen"]]})
-    st.dataframe(scen,use_container_width=True,hide_index=True)
+    st.markdown(
+        '<div class="rule"><b>BASE V17</b><br>'
+        'Verdeelt de DV01 van iedere Rho-maand gelijk over alle kwartaal-Euribors vanaf het frontcontract tot het hedgekwartaal.</div>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        '<div class="rule"><b>ANALYSED V2.2</b><br>'
+        'Plaatst dezelfde hedge-KR01 preciezer op de curve via de maand→IMM mapping, inclusief de twee front serials.</div>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        f'<div class="rule"><b>BESLISREGEL</b><br>'
+        f'Analysed alleen bij ≥ €10.000 lager curve-risico én ≥ 80% beter in de 20%-sensitiviteitstest met 10.000 runs. '
+        f'Nu: {euro(result["benefit"])} en {result["robustness"]:.1f}%.</div>',
+        unsafe_allow_html=True
+    )
+    st.info("20% is een stresstest, geen gemeten foutpercentage. UITVOEREN is geen derde hedge: het toont exact de gekozen BASE- of ANALYSED-hedge.")
+    with st.expander("Stress-scenario's"):
+        scen=pd.DataFrame({
+            "Scenario":[x[0] for x in result["base_scen"]],
+            "Base €":[x[1] for x in result["base_scen"]],
+            "Analysed €":[x[1] for x in result["analysed_scen"]]
+        })
+        st.dataframe(scen,use_container_width=True,hide_index=True)
 
-st.caption("ATLAS RHO Mobile 0.8 · Locked V17 Base · V2.2 Analysed")
+st.caption("ATLAS RHO Mobile · Locked V17 Base · V2.2 Analysed")
