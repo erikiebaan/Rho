@@ -776,11 +776,11 @@ if r and source == "TWS / IB GATEWAY":
         krdf = r["kr"].reset_index(drop=True)
         map_rows = []
         map_names = [
-            ("FRONT STUB", "Geen exacte quarterly FEU3", "Oct-26 alleen proxy/overlap"),
-            ("Dec-26", "IZ6", "Dec→Mar"),
-            ("Mar-27", "IH7", "Mar→Jun"),
-            ("Jun-27", "IM7", "Jun→Sep"),
-            ("Sep-27", "IU7", "alleen laatste dagen vóór option expiry"),
+            ("FRONT STUB", "Oct/Nov serials", "apart testen; mag later ook bewust UNHEDGED blijven"),
+            ("Dec-26", "ICEEU I Dec26", "Dec→Mar"),
+            ("Mar-27", "ICEEU I Mar27", "Mar→Jun"),
+            ("Jun-27", "ICEEU I Jun27", "Jun→Sep"),
+            ("Sep-27", "ICEEU I Sep27", "alleen laatste dagen vóór option expiry"),
         ]
         for n, row in krdf.iterrows():
             m = map_names[n] if n < len(map_names) else ("—", "—", "—")
@@ -788,8 +788,8 @@ if r and source == "TWS / IB GATEWAY":
                 "Option KR01 bucket": row["Bucket"],
                 "KR01 €/bp": row["KR01 €"],
                 "Weight %": row["Weight %"],
-                "FEU3 mapping": m[0],
-                "IB local": m[1],
+                "Euribor mapping": m[0],
+                "Hedge contract": m[1],
                 "Interpretation": m[2],
             })
         st.dataframe(
@@ -823,7 +823,7 @@ if r and source == "TWS / IB GATEWAY":
                     })
                 st.dataframe(pd.DataFrame(diag_rows), use_container_width=True, hide_index=True)
         st.warning(
-            "Nog géén Gate 4B: FEU3 is 3M Euribor, terwijl de option-pricer een discount/forward curve gebruikt. "
+            "Nog géén Gate 4B: ICE 3M Euribor is het hedge-instrument, terwijl de option-pricer een discount/forward curve gebruikt. "
             "Basis/convexity en de front stub moeten nog worden gevalideerd vóór Analysed Hedge."
         )
 
@@ -833,4 +833,4 @@ st.markdown(
     "**Gate 3** bucketed KR01 van de optie · **Gate 4A** FEU3 instrument/period mapping · **Gate 4B** discount/OIS→Euribor basis/convexity.  "
     "De €600k onderzoeksportefeuille wordt pas daarna gekoppeld. Pas na alle gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V1.1 · research only")
+st.caption("ATLAS RHO · KR01 LAB V1.2 · research only")
