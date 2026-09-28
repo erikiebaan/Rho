@@ -941,7 +941,7 @@ if r and source == "TWS / IB GATEWAY" and ib and model.get("optPrice") is not No
             column_config={
                 "IB-implied KR01": st.column_config.NumberColumn("IB-implied €/bp", format="€ %.3f"),
                 "ABN/manual KR01": st.column_config.NumberColumn("ABN/manual €/bp", format="€ %.3f"),
-                "Difference": st.column_config.NumberColumn("Difference", format="€ %+.3f"),
+                "Difference": st.column_config.NumberColumn("Difference", format="€ %.3f"),
                 "IB weight %": st.column_config.NumberColumn("IB weight", format="%.1f%%"),
                 "ABN weight %": st.column_config.NumberColumn("ABN weight", format="%.1f%%"),
             },
@@ -956,7 +956,8 @@ if r and source == "TWS / IB GATEWAY" and ib and model.get("optPrice") is not No
 st.markdown('<div class="section">VALIDATION GATES</div>', unsafe_allow_html=True)
 st.markdown(
     "**Gate 1** contract + IB modeldata · **Gate 2** eigen option price versus IB model · "
-    "**Gate 3** bucketed KR01 van de optie · **Gate 4A** FEU3 instrument/period mapping · **Gate 4B** discount/OIS→Euribor basis/convexity.  "
+    "**Gate 3** bucketed KR01 van de optie · **Gate 4A** ICE Euribor instrument/period mapping · "
+    "**Gate 4B** pricing-rente/dividend robustness + Euribor hedge mapping.  "
     "De €600k onderzoeksportefeuille wordt pas daarna gekoppeld. Pas na alle gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
 st.caption("ATLAS RHO · KR01 LAB V1.3 · research only")
