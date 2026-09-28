@@ -1209,7 +1209,7 @@ st.markdown('<div class="section">VALIDATION GATES</div>', unsafe_allow_html=Tru
 st.markdown(
     "**Gate 1** contract + IB modeldata · **Gate 2** eigen option price versus IB model · "
     "**Gate 3** bucketed KR01 van de optie · **Gate 4A** ICE Euribor instrument/period mapping · "
-    "**Gate 4B** pricing-rente/dividend robustness + Euribor hedge mapping.  "
+    "**Gate 4B-1** IB pricing-rate/curve validation · **Gate 4B-2** Euribor hedge mapping/basis.  "
     "De €600k onderzoeksportefeuille wordt pas daarna gekoppeld. Pas na alle gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
 st.caption("ATLAS RHO · KR01 LAB V1.5 · research only")
