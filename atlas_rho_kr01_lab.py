@@ -950,6 +950,69 @@ if r and source == "TWS / IB GATEWAY" and ib and model.get("optPrice") is not No
             f"ABN/manual model price: {abn_px:.3f}. "
             "Nog geen PASS/FAIL: eerst echte ABN-input invullen en daarna bepalen hoeveel verschil wij acceptabel vinden."
         )
+
+
+        st.markdown("#### ROBUSTNESS TEST · RATE ±50BP / DIVIDEND ±10%")
+        st.caption(
+            "Jip: we duwen rente en dividend expres beide kanten op. "
+            "We kijken of vooral de grootte van KR01 verandert, of ook de verdeling over de maanden."
+        )
+
+        base_weights = (
+            ib_kr["KR01 €"] / ib_total * 100.0
+            if abs(ib_total) > 1e-12 else pd.Series([float("nan")] * len(ib_kr))
+        )
+        stress_rows = []
+        for rate_shift_bp in (-50, 0, 50):
+            for div_shift_pct in (-10, 0, 10):
+                test_rate = float(ib_effective_rate) + rate_shift_bp / 100.0
+                test_div = float(pv_div) * (1.0 + div_shift_pct / 100.0)
+                test_curve = flat_curve_from(research_curve, test_rate)
+                test_px, test_kr = bucketed_kr01(
+                    float(spot), float(strike), float(vol_pct) / 100.0, test_div, test_curve,
+                    right, float(multiplier), int(position), bump_bp=1.0,
+                )
+                test_total = float(test_kr["KR01 €"].sum())
+                test_weights = (
+                    test_kr["KR01 €"] / test_total * 100.0
+                    if abs(test_total) > 1e-12 else pd.Series([float("nan")] * len(test_kr))
+                )
+                total_change_pct = (
+                    (test_total / ib_total - 1.0) * 100.0
+                    if abs(ib_total) > 1e-12 else float("nan")
+                )
+                max_weight_shift = float((test_weights - base_weights).abs().max())
+                stress_rows.append({
+                    "Rate shock": f"{rate_shift_bp:+d} bp",
+                    "Dividend shock": f"{div_shift_pct:+d}%",
+                    "Model px": test_px,
+                    "KR01 €/bp": test_total,
+                    "KR01 change %": total_change_pct,
+                    "Max bucket shift pp": max_weight_shift,
+                })
+
+        stress_df = pd.DataFrame(stress_rows)
+        worst_kr01 = float(stress_df["KR01 change %"].abs().max())
+        worst_weight = float(stress_df["Max bucket shift pp"].max())
+
+        t1, t2 = st.columns(2)
+        t1.metric("Worst KR01 change", f"{worst_kr01:.2f}%")
+        t2.metric("Worst bucket-weight shift", f"{worst_weight:.2f} pp")
+        st.dataframe(
+            stress_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Model px": st.column_config.NumberColumn("Model px", format="%.3f"),
+                "KR01 €/bp": st.column_config.NumberColumn("KR01 €/bp", format="€ %.3f"),
+                "KR01 change %": st.column_config.NumberColumn("KR01 change", format="%.2f%%"),
+                "Max bucket shift pp": st.column_config.NumberColumn("Max bucket shift", format="%.2f pp"),
+            },
+        )
+        st.info(
+            "Nog geen PASS/FAIL. Eerst meten we hoe groot de verschillen werkelijk zijn. "
+            "Daarna leggen we samen vast wat voor de Risk Manager materieel is."
+        )
     except Exception as e:
         st.warning(f"Gate 4B research kon niet worden berekend: {e}")
 
@@ -960,4 +1023,4 @@ st.markdown(
     "**Gate 4B** pricing-rente/dividend robustness + Euribor hedge mapping.  "
     "De €600k onderzoeksportefeuille wordt pas daarna gekoppeld. Pas na alle gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V1.3 · research only")
+st.caption("ATLAS RHO · KR01 LAB V1.4 · research only")
