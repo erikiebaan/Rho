@@ -153,6 +153,13 @@ def scenario_values(target,lots):
     return vals,worst
 
 def robustness(exposures,true_target,contracts):
+    """Validated 20% sensitivity: Locked V17 vs Analysed against the unchanged true curve.
+
+    Each observed monthly Rho bucket is independently perturbed with 20% Gaussian
+    measurement noise. Both hedges see the same perturbed observation; both are then
+    judged against the original unperturbed curve target. Score = % runs in which
+    Analysed has lower worst non-parallel curve mismatch than Locked V17.
+    """
     rng=np.random.default_rng(ROBUST_SEED)
     dates=[d for d,_ in exposures]
     vals=np.array([v for _,v in exposures],dtype=float)
@@ -349,6 +356,7 @@ with tabs[3]:
     st.markdown(
         f'<div class="rule"><b>BESLISREGEL</b><br>'
         f'Analysed alleen bij ≥ €10.000 lager curve-risico én ≥ 80% beter in de 20%-sensitiviteitstest met 10.000 runs. '
+        f'Daarin krijgen BASE V17 en ANALYSED exact dezelfde verstoorde maand-Rho en worden beide beoordeeld tegen de oorspronkelijke curve. '
         f'Nu: {euro(result["benefit"])} en {result["robustness"]:.1f}%.</div>',
         unsafe_allow_html=True
     )
