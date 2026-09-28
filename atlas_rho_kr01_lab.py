@@ -837,6 +837,10 @@ if "kr01_euribor_strip" not in st.session_state:
     st.session_state.kr01_euribor_strip = None
 if "kr01_ib_reprice" not in st.session_state:
     st.session_state.kr01_ib_reprice = None
+if "kr01_fixed_a" not in st.session_state:
+    st.session_state.kr01_fixed_a = None
+if "kr01_fixed_b" not in st.session_state:
+    st.session_state.kr01_fixed_b = None
 if "kr01_curve_key" not in st.session_state:
     st.session_state.kr01_curve_key = None
 
@@ -927,10 +931,10 @@ if ib and model:
 
 
 if source == "TWS / IB GATEWAY" and ib and model:
-    st.markdown("#### IB REPRICING CONTROL · V1.6.2")
+    st.markdown("#### IB REPRICING CONTROL · V1.7.0")
     st.caption(
         "IB tegen IB: dezelfde OESX-optie, streaming model versus calculateOptionPrice(). "
-        "We tonen nu ook de modelvelden terug uit beide IB-routes. Base V1 en de hedge blijven onaangeraakt."
+        "Base V1 en de hedge blijven onaangeraakt."
     )
     if st.button("RUN IB REPRICING CONTROL", use_container_width=True):
         try:
@@ -967,46 +971,14 @@ if source == "TWS / IB GATEWAY" and ib and model:
             return "—" if v is None or not math.isfinite(float(v)) or abs(float(v)) > 1e100 else f"{float(v):.{n}f}"
 
         compare = pd.DataFrame([
-            {
-                "Model field": "Option price",
-                "Streaming": _fmt_num(model.get("optPrice"), 3),
-                "calculateOptionPrice": _fmt_num(rr.get("optPrice"), 3),
-            },
-            {
-                "Model field": "Implied vol",
-                "Streaming": _fmt_pct(model.get("impliedVol")),
-                "calculateOptionPrice": _fmt_pct(rr.get("impliedVol")),
-            },
-            {
-                "Model field": "Underlying",
-                "Streaming": _fmt_num(model.get("undPrice"), 2),
-                "calculateOptionPrice": _fmt_num(rr.get("undPrice"), 2),
-            },
-            {
-                "Model field": "PV dividend",
-                "Streaming": _fmt_num(model.get("pvDividend"), 3),
-                "calculateOptionPrice": _fmt_num(rr.get("pvDividend"), 3),
-            },
-            {
-                "Model field": "Delta",
-                "Streaming": _fmt_num(model.get("delta"), 5),
-                "calculateOptionPrice": _fmt_num(rr.get("delta"), 5),
-            },
-            {
-                "Model field": "Gamma",
-                "Streaming": _fmt_num(model.get("gamma"), 6),
-                "calculateOptionPrice": _fmt_num(rr.get("gamma"), 6),
-            },
-            {
-                "Model field": "Vega",
-                "Streaming": _fmt_num(model.get("vega"), 4),
-                "calculateOptionPrice": _fmt_num(rr.get("vega"), 4),
-            },
-            {
-                "Model field": "Theta",
-                "Streaming": _fmt_num(model.get("theta"), 4),
-                "calculateOptionPrice": _fmt_num(rr.get("theta"), 4),
-            },
+            {"Model field": "Option price", "Streaming": _fmt_num(model.get("optPrice"), 3), "calculateOptionPrice": _fmt_num(rr.get("optPrice"), 3)},
+            {"Model field": "Implied vol", "Streaming": _fmt_pct(model.get("impliedVol")), "calculateOptionPrice": _fmt_pct(rr.get("impliedVol"))},
+            {"Model field": "Underlying", "Streaming": _fmt_num(model.get("undPrice"), 2), "calculateOptionPrice": _fmt_num(rr.get("undPrice"), 2)},
+            {"Model field": "PV dividend", "Streaming": _fmt_num(model.get("pvDividend"), 3), "calculateOptionPrice": _fmt_num(rr.get("pvDividend"), 3)},
+            {"Model field": "Delta", "Streaming": _fmt_num(model.get("delta"), 5), "calculateOptionPrice": _fmt_num(rr.get("delta"), 5)},
+            {"Model field": "Gamma", "Streaming": _fmt_num(model.get("gamma"), 6), "calculateOptionPrice": _fmt_num(rr.get("gamma"), 6)},
+            {"Model field": "Vega", "Streaming": _fmt_num(model.get("vega"), 4), "calculateOptionPrice": _fmt_num(rr.get("vega"), 4)},
+            {"Model field": "Theta", "Streaming": _fmt_num(model.get("theta"), 4), "calculateOptionPrice": _fmt_num(rr.get("theta"), 4)},
         ])
         st.dataframe(compare, use_container_width=True, hide_index=True)
         st.caption(
@@ -1017,9 +989,84 @@ if source == "TWS / IB GATEWAY" and ib and model:
             st.success("GATE 4B-1 CONTROL PASS · IB repricing reproduceert de IB streaming modelprijs binnen 0,10%.")
         else:
             st.warning(
-                "GATE 4B-1 CONTROL NOG NIET PASS · eerst verklaren welk IB-modelveld/context verschilt. "
-                "Geen hedgeconclusie trekken."
+                "GATE 4B-1 CONTROL NOG NIET PASS · streaming en calculateOptionPrice gebruiken hier niet exact dezelfde modelcontext."
             )
+
+    st.markdown("#### FIXED INPUT KEY-RATE A/B · V1.7.0")
+    st.caption(
+        "Voor bucket-KR01 houden we SX5E en IV exact vast. Alleen jij verandert tussen A en B één TWS-rentenode met +1 bp. "
+        "Zo kan marktbeweging de meting niet vervuilen."
+    )
+    k1, k2, k3 = st.columns([1, 1, 1])
+    fixed_spot = k1.number_input("Fixed SX5E", value=6311.95, step=0.01, key="kr01_fixed_spot")
+    fixed_iv_pct = k2.number_input("Fixed IV %", value=17.182, step=0.001, format="%.3f", key="kr01_fixed_iv")
+    node_label = k3.text_input("Node / test", value="Dec-26", key="kr01_node_label")
+
+    a1, a2, a3 = st.columns([1, 1, 0.7])
+    if a1.button("SAVE A · 0 BP", use_container_width=True):
+        try:
+            res = ib_reprice_option(
+                host, port, int(client_id) + 3, expiry, strike, right,
+                float(fixed_iv_pct) / 100.0, float(fixed_spot),
+            )
+            st.session_state.kr01_fixed_a = {
+                "node": node_label, "spot": float(fixed_spot), "iv_pct": float(fixed_iv_pct),
+                "price": float(res["result"]["optPrice"]), "result": res,
+            }
+            st.session_state.kr01_fixed_b = None
+            st.rerun()
+        except Exception as e:
+            st.error(str(e))
+
+    if a2.button("RUN B · +1 BP", use_container_width=True):
+        try:
+            res = ib_reprice_option(
+                host, port, int(client_id) + 4, expiry, strike, right,
+                float(fixed_iv_pct) / 100.0, float(fixed_spot),
+            )
+            st.session_state.kr01_fixed_b = {
+                "node": node_label, "spot": float(fixed_spot), "iv_pct": float(fixed_iv_pct),
+                "price": float(res["result"]["optPrice"]), "result": res,
+            }
+            st.rerun()
+        except Exception as e:
+            st.error(str(e))
+
+    if a3.button("RESET A/B", use_container_width=True):
+        st.session_state.kr01_fixed_a = None
+        st.session_state.kr01_fixed_b = None
+        st.rerun()
+
+    fixed_a = st.session_state.get("kr01_fixed_a")
+    fixed_b = st.session_state.get("kr01_fixed_b")
+    if fixed_a:
+        st.info(
+            f"A opgeslagen · {fixed_a['node']} · SX5E {fixed_a['spot']:.2f} · "
+            f"IV {fixed_a['iv_pct']:.3f}% · IB prijs {fixed_a['price']:.3f}"
+        )
+    if fixed_a and fixed_b:
+        same_inputs = (
+            abs(float(fixed_a["spot"]) - float(fixed_b["spot"])) < 1e-12
+            and abs(float(fixed_a["iv_pct"]) - float(fixed_b["iv_pct"])) < 1e-12
+        )
+        dpx = float(fixed_b["price"]) - float(fixed_a["price"])
+        kr01_eur = dpx * float(multiplier) * float(position)
+        b1, b2, b3, b4 = st.columns(4)
+        b1.metric("A · 0 bp", f"{fixed_a['price']:.3f}")
+        b2.metric("B · +1 bp", f"{fixed_b['price']:.3f}")
+        b3.metric("Δ option pts", f"{dpx:+.3f}")
+        b4.metric("KR01 € / bp", f"{kr01_eur:+.2f}")
+        if same_inputs:
+            st.success(
+                f"FIXED INPUT METING GELDIG · {fixed_b['node']} +1 bp · "
+                f"SX5E {fixed_b['spot']:.2f} en IV {fixed_b['iv_pct']:.3f}% waren identiek in A en B."
+            )
+        else:
+            st.error("METING ONGELDIG · fixed SX5E of IV verschilt tussen A en B. Reset en herhaal.")
+        st.caption(
+            "Controlepunt: de app kan niet zien welke TWS-rentenode jij handmatig hebt gewijzigd. "
+            "Gebruik B alleen nadat exact één afgesproken node +1 bp is gezet."
+        )
 
 st.markdown('<div class="section">2 · EUR CURVE BUCKETS</div>', unsafe_allow_html=True)
 curve_key = (valuation, expiry)
@@ -1436,4 +1483,4 @@ st.markdown(
     "**Gate 4B-1** IB pricing-rate/curve + IB repricing validation · **Gate 4B-2** Euribor hedge mapping/basis.  "
     "De €600k onderzoeksportefeuille wordt pas daarna gekoppeld. Pas na alle gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V1.6.3 · research only")
+st.caption("ATLAS RHO · KR01 LAB V1.7.0 · research only")
