@@ -427,57 +427,35 @@ with tabs[0]:
             "Base blijft leidend: Analysed haalt de 80%-sensitiviteitsgrens niet.")
     st.markdown(f'<div class="reason">{reason}</div>',unsafe_allow_html=True)
 
-    st.markdown('<div class="section">NU UITVOEREN</div>',unsafe_allow_html=True)
-    st.markdown('<div class="order-head"><span>CONTRACT</span><span>ACTIE</span><span style="text-align:right">LOTS</span></div>',unsafe_allow_html=True)
     selected=r["analysed"] if is_a else r["base"]
-    lines=[]
-    for (contract,kind),lots in zip(r["contracts"],selected):
-        if not lots:
-            continue
-        action="SELL" if lots>0 else "BUY"
-        qty=abs(int(lots))
-        lines.append(f"3M Euribor {contract} | {action} | {qty}")
-        st.markdown(
-            f'<div class="order"><div class="contract">3M Euribor {contract}</div>'
-            f'<div class="{"sell" if action=="SELL" else "buy"}">{action}</div>'
-            f'<div class="qty">{qty}</div></div>',unsafe_allow_html=True
-        )
-    st.download_button(
-        "ORDERLIJST",data="\n".join(lines),
-        file_name=f"ATLAS_RHO_{r['decision']}_ORDERS.txt",
-        mime="text/plain",use_container_width=True
-    )
 
-
-    st.markdown('<div class="section">BEST EXACT EXECUTION</div>',unsafe_allow_html=True)
-    st.caption("Zelfde hedge · andere uitvoering. Packs/bundles mogen de kwartaalhedge nooit veranderen.")
-
-    with st.expander("Execution aannames"):
-        ec1,ec2=st.columns(2)
-        outright_spread=ec1.number_input("Outright spread (bp)",min_value=0.0,value=0.5,step=0.125,key="ex_out")
-        pack_spread=ec2.number_input("Pack spread (bp)",min_value=0.0,value=0.5,step=0.125,key="ex_pack")
-        ec3,ec4=st.columns(2)
-        bundle2_spread=ec3.number_input("2Y Bundle spread (bp)",min_value=0.0,value=0.5,step=0.125,key="ex_b2")
-        bundle_long_spread=ec4.number_input("3Y+ Bundle spread (bp)",min_value=0.0,value=0.625,step=0.125,key="ex_bl")
-        fee1,fee2=st.columns(2)
-        outright_fee=fee1.number_input("Outright fee / lot €",min_value=0.0,value=0.0,step=0.10,key="ex_ofee")
-        strategy_fee=fee2.number_input("Strategy fee / unit €",min_value=0.0,value=0.0,step=0.10,key="ex_sfee")
-
+    # Execution assumptions live in session state so BEST EXACT can stay visually first.
+    exec_defaults={
+        "ex_out":0.5,"ex_pack":0.5,"ex_b2":0.5,"ex_bl":0.625,
+        "ex_ofee":0.0,"ex_sfee":0.0,
+    }
+    for k,v in exec_defaults.items():
+        if k not in st.session_state:
+            st.session_state[k]=v
     assumptions={
-        "outright_spread_bp":outright_spread,
-        "pack_spread_bp":pack_spread,
-        "bundle_2y_spread_bp":bundle2_spread,
-        "bundle_3y_spread_bp":bundle_long_spread,
-        "bundle_4y_spread_bp":bundle_long_spread,
-        "bundle_5y_spread_bp":bundle_long_spread,
-        "bundle_6y_spread_bp":bundle_long_spread,
-        "outright_fee":outright_fee,
-        "strategy_fee":strategy_fee,
+        "outright_spread_bp":float(st.session_state.ex_out),
+        "pack_spread_bp":float(st.session_state.ex_pack),
+        "bundle_2y_spread_bp":float(st.session_state.ex_b2),
+        "bundle_3y_spread_bp":float(st.session_state.ex_bl),
+        "bundle_4y_spread_bp":float(st.session_state.ex_bl),
+        "bundle_5y_spread_bp":float(st.session_state.ex_bl),
+        "bundle_6y_spread_bp":float(st.session_state.ex_bl),
+        "outright_fee":float(st.session_state.ex_ofee),
+        "strategy_fee":float(st.session_state.ex_sfee),
     }
     exec_contracts=[]
     for (label,kind) in r["contracts"]:
         d=parse_month(label)
         exec_contracts.append((d,third_wednesday(d.year,d.month),kind))
+
+    st.markdown('<div class="section">BEST EXACT EXECUTION</div>',unsafe_allow_html=True)
+    st.caption("Dit is wat je uitvoert. Zelfde kwartaalhedge, efficiënter opgebouwd met outrights, Packs en Bundles.")
+
     try:
         ex=optimize_exact_execution(exec_contracts,selected,assumptions)
         st.markdown(
@@ -502,8 +480,10 @@ with tabs[0]:
                 f'<div class="execbot">{period} · exacte reconstructie</div></div>',
                 unsafe_allow_html=True
             )
+
         st.markdown(
-            f'<div class="reason"><b>CONTROLE ✓</b> · kwartaalverschil €0/bp. '
+            f'<div class="reason"><b>CONTROLE ✓ · CURVE Δ €0/bp</b><br>'
+            f'De uitvoering reconstrueert de gekozen {r["decision"]}-hedge contract voor contract. '
             f'All-outright: {ex["reference_orders"]} orders, est. {euro(ex["reference_cost"])} · '
             f'Best exact: {len(ex["orders"])} orders, est. {euro(ex["best_cost"])}.</div>',
             unsafe_allow_html=True
@@ -513,6 +493,40 @@ with tabs[0]:
             file_name=f"ATLAS_RHO_{r['decision']}_BEST_EXECUTION.txt",
             mime="text/plain",use_container_width=True,key="best_exec_download"
         )
+
+        with st.expander("Onderliggende exacte kwartaalhedge"):
+            st.caption("Audit: dit is de hedge die bovenstaande Packs/Bundles exact moeten reconstrueren.")
+            st.markdown('<div class="order-head"><span>CONTRACT</span><span>ACTIE</span><span style="text-align:right">LOTS</span></div>',unsafe_allow_html=True)
+            hedge_lines=[]
+            for (contract,kind),lots in zip(r["contracts"],selected):
+                if not lots:
+                    continue
+                action="SELL" if lots>0 else "BUY"
+                qty=abs(int(lots))
+                hedge_lines.append(f"3M Euribor {contract} | {action} | {qty}")
+                st.markdown(
+                    f'<div class="order"><div class="contract">3M Euribor {contract}</div>'
+                    f'<div class="{"sell" if action=="SELL" else "buy"}">{action}</div>'
+                    f'<div class="qty">{qty}</div></div>',unsafe_allow_html=True
+                )
+            st.download_button(
+                "ONDERLIGGENDE HEDGE",data="\n".join(hedge_lines),
+                file_name=f"ATLAS_RHO_{r['decision']}_UNDERLYING_HEDGE.txt",
+                mime="text/plain",use_container_width=True,key="underlying_download"
+            )
+
+        with st.expander("Execution aannames"):
+            ec1,ec2=st.columns(2)
+            ec1.number_input("Outright spread (bp)",min_value=0.0,step=0.125,key="ex_out")
+            ec2.number_input("Pack spread (bp)",min_value=0.0,step=0.125,key="ex_pack")
+            ec3,ec4=st.columns(2)
+            ec3.number_input("2Y Bundle spread (bp)",min_value=0.0,step=0.125,key="ex_b2")
+            ec4.number_input("3Y+ Bundle spread (bp)",min_value=0.0,step=0.125,key="ex_bl")
+            fee1,fee2=st.columns(2)
+            fee1.number_input("Outright fee / lot €",min_value=0.0,step=0.10,key="ex_ofee")
+            fee2.number_input("Strategy fee / unit €",min_value=0.0,step=0.10,key="ex_sfee")
+            st.caption("Kosten zijn schattingen op basis van half de ingevoerde full bid/ask spread plus fees; geen gegarandeerde fill-kosten.")
+
     except Exception as exc:
         st.error(f"Execution optimizer: {exc}")
 
