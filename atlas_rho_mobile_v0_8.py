@@ -45,10 +45,8 @@ def hedge_quarter(d):
     return date(d.year, ((d.month-1)//3+1)*3, 1)
 
 def first_quarter(v):
-    q=hedge_quarter(v)
-    if q.month==v.month and third_wednesday(q.year,q.month)<=v:
-        q=add_months(q,3)
-    return q
+    # Exact LOCKED V17 rule: first contract = quarter-ceil of valuation + 1 month.
+    return hedge_quarter(add_months(v,1))
 
 def quarter_strip(v,last):
     out=[]; d=first_quarter(v)
@@ -120,6 +118,26 @@ def align_base(exposures,contracts):
     _,_,base,detail=locked_v17_base(exposures)
     return np.array([base.get(c[0],0) for c in contracts],dtype=int),detail
 
+def engine_integrity_check():
+    """Golden regression check: protects the locked Base and Analysed mappings."""
+    exposures=[(parse_month(m),v) for m,v in DEFAULT_EXPOSURE]
+    contracts,target,analysed=analysed_target_and_lots(exposures)
+    base,_=align_base(exposures,contracts)
+    names=[fmt_month(x[0]) for x in contracts]
+
+    expected_base={
+        "Dec-26":144,"Mar-27":104,"Jun-27":74,"Sep-27":20,"Dec-27":20,
+        "Mar-28":60,"Jun-28":-23,"Sep-28":-23,"Dec-28":-36
+    }
+    expected_analysed={
+        "Oct-26":24,"Nov-26":16,"Dec-26":49,"Mar-27":37,"Jun-27":134,
+        "Sep-27":-31,"Dec-27":67,"Mar-28":264,"Jun-28":21,"Sep-28":12,"Dec-28":-253
+    }
+    got_base={n:int(v) for n,v in zip(names,base) if int(v)!=0}
+    got_analysed={n:int(v) for n,v in zip(names,analysed) if int(v)!=0}
+    if got_base != expected_base or got_analysed != expected_analysed:
+        raise RuntimeError("ATLAS RHO engine integrity check failed")
+
 def scenario_values(target,lots):
     residual=target-np.asarray(lots,dtype=float)*KR01_PER_FUTURE
     n=len(residual); z=np.linspace(0,1,n) if n>1 else np.zeros(1)
@@ -169,6 +187,12 @@ def lot_text(x):
 def diff_text(b,a):
     d=int(a)-int(b)
     return f"+{d} richting SELL" if d>0 else f"{abs(d)} richting BUY" if d<0 else "0"
+
+try:
+    engine_integrity_check()
+except Exception as exc:
+    st.error(f"ENGINE LOCK FAILED · {exc}")
+    st.stop()
 
 st.set_page_config(page_title="ATLAS RHO Mobile",page_icon="◼",layout="centered",initial_sidebar_state="collapsed")
 st.markdown("""
