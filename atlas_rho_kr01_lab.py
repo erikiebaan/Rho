@@ -388,19 +388,22 @@ def find_ib_option(host, port, client_id, expiry, strike, right, market_type=1, 
 
 
 EURIBOR_TEST_CONTRACTS = [
-    {"month": "Oct-26", "expiry": "202610", "role": "FRONT PROXY"},
-    {"month": "Dec-26", "expiry": "202612", "role": "DEC→MAR"},
-    {"month": "Mar-27", "expiry": "202703", "role": "MAR→JUN"},
-    {"month": "Jun-27", "expiry": "202706", "role": "JUN→SEP"},
-    {"month": "Sep-27", "expiry": "202709", "role": "SEP→DEC"},
+    {"month": "Oct-26", "expiry": "202610", "role": "SERIAL · FRONT RESEARCH"},
+    {"month": "Nov-26", "expiry": "202611", "role": "SERIAL · FRONT RESEARCH"},
+    {"month": "Dec-26", "expiry": "202612", "role": "QUARTER · DEC→MAR"},
+    {"month": "Jan-27", "expiry": "202701", "role": "SERIAL · FRONT RESEARCH"},
+    {"month": "Feb-27", "expiry": "202702", "role": "SERIAL · FRONT RESEARCH"},
+    {"month": "Mar-27", "expiry": "202703", "role": "QUARTER · MAR→JUN"},
+    {"month": "Jun-27", "expiry": "202706", "role": "QUARTER · JUN→SEP"},
+    {"month": "Sep-27", "expiry": "202709", "role": "QUARTER · SEP→DEC"},
 ]
 
 
 def _resolve_euribor_future(app, expiry, timeout):
-    """Resolve FEU3 by IB's product symbol EU3 + contract month; never rely on stored conIds."""
+    """Resolve ICE Futures Europe Three Month Euribor: IB underlying/trading class I on ICEEU."""
     attempts = [
-        ("EU3", "EUREX"),
-        ("EU3", "EUREXEU"),
+        ("I", "ICEEU"),
+        ("I", "ICEU"),
     ]
     diagnostics = []
     for symbol, exchange in attempts:
@@ -425,7 +428,6 @@ def _resolve_euribor_future(app, expiry, timeout):
             "errors": app.errors[err_start:],
         })
         if details:
-            # Prefer exact contractMonth, then local-symbol month encoded by IB.
             exact = [
                 d for d in details
                 if (getattr(d, "contractMonth", "") or "").startswith(expiry)
@@ -437,7 +439,7 @@ def _resolve_euribor_future(app, expiry, timeout):
 
 
 def fetch_euribor_strip(host, port, client_id, market_type=1, timeout=6.0):
-    """Resolve current 3M Euribor futures dynamically in TWS, then fetch a usable quote."""
+    """Resolve ICEEU 3M Euribor futures dynamically and accept delayed/frozen quotes."""
     if not IBAPI_AVAILABLE:
         raise RuntimeError("IB TWS Python API is niet geïnstalleerd in deze Python-omgeving.")
     app = IBOptionSnapshot()
@@ -493,6 +495,7 @@ def fetch_euribor_strip(host, port, client_id, market_type=1, timeout=6.0):
             **spec,
             "conId": int(contract.conId),
             "resolved_local": contract.localSymbol,
+            "exchange": contract.exchange,
             "price": price,
             "rate": (100.0 - price) if price is not None else None,
             "feed": feed_used,
@@ -735,8 +738,8 @@ if r:
 if r and source == "TWS / IB GATEWAY":
     st.markdown('<div class="section">4 · EURIBOR FUTURES MAPPING</div>', unsafe_allow_html=True)
     st.caption(
-        "Nu koppelen we de gemeten option-KR01 aan de echte FEU3-renteperioden. "
-        "Belangrijk: een contractmaand benoemt het BEGIN van de 3-maands renteperiode."
+        "Nu koppelen we de gemeten option-KR01 aan ICEEU Three Month Euribor (IB: I). "
+        "Kwartalen blijven de Base; Oct/Nov/Jan/Feb serials zijn alleen front-stub research."
     )
     if st.button("LOAD EURIBOR FUTURES FROM TWS", use_container_width=True):
         try:
@@ -753,6 +756,7 @@ if r and source == "TWS / IB GATEWAY":
             "Contract": x["month"],
             "IB local": x.get("resolved_local") or "—",
             "conId": x.get("conId"),
+            "Exchange": x.get("exchange"),
             "Price": x["price"],
             "Implied 3M %": x["rate"],
             "Rate period": x["role"],
@@ -798,11 +802,12 @@ if r and source == "TWS / IB GATEWAY":
             },
         )
 
-        ok = all(x.get("price") is not None for x in strip[1:])
+        quarter_months = {"Dec-26", "Mar-27", "Jun-27", "Sep-27"}
+        ok = all(x.get("price") is not None for x in strip if x["month"] in quarter_months)
         if ok:
             st.success(
-                "GATE 4A INSTRUMENT MAPPING PASS · Dec-26, Mar-27, Jun-27 en Sep-27 zijn live/frozen uit TWS gekoppeld. "
-                "De front stub blijft bewust apart."
+                "GATE 4A INSTRUMENT MAPPING PASS · de vier kwartaalfutures zijn via ICEEU uit TWS gekoppeld. "
+                "Serials blijven research voor de front stub; ze vervangen de Base niet."
             )
         else:
             st.warning("GATE 4A NOG NIET GESLAAGD · één of meer kwartaalfutures hebben geen bruikbare TWS-koers.")
@@ -828,4 +833,4 @@ st.markdown(
     "**Gate 3** bucketed KR01 van de optie · **Gate 4A** FEU3 instrument/period mapping · **Gate 4B** discount/OIS→Euribor basis/convexity.  "
     "De €600k onderzoeksportefeuille wordt pas daarna gekoppeld. Pas na alle gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V1.0 · research only")
+st.caption("ATLAS RHO · KR01 LAB V1.1 · research only")
