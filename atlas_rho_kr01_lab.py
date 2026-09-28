@@ -11,6 +11,8 @@ try:
     from ibapi.client import EClient
     from ibapi.contract import Contract
     from ibapi.wrapper import EWrapper
+    from ibapi.message import OUT
+    from ibapi.comm import make_field
     IBAPI_AVAILABLE = True
 except Exception:
     IBAPI_AVAILABLE = False
@@ -312,6 +314,41 @@ class IBOptionSnapshot(EWrapper, EClient):
     def nextValidId(self, orderId):
         self.ready.set()
 
+    def calculateOptionPriceCompat(self, reqId, contract, volatility, underPrice):
+        """
+        Socket compatibility path for current TWS.
+        Some older Python clients prepend a misc-options COUNT field. Current TWS
+        expects only one Key=Value options string and rejects that extra count with
+        error 320. Empty options therefore means one empty string field, no count.
+        """
+        if not self.isConnected():
+            self.wrapper.error(reqId, 504, "Not connected")
+            return
+
+        version = 3
+        fields = [
+            make_field(OUT.REQ_CALC_OPTION_PRICE),
+            make_field(version),
+            make_field(reqId),
+            make_field(contract.conId),
+            make_field(contract.symbol),
+            make_field(contract.secType),
+            make_field(contract.lastTradeDateOrContractMonth),
+            make_field(contract.strike),
+            make_field(contract.right),
+            make_field(contract.multiplier),
+            make_field(contract.exchange),
+            make_field(contract.primaryExchange),
+            make_field(contract.currency),
+            make_field(contract.localSymbol),
+            make_field(contract.tradingClass),
+            make_field(volatility),
+            make_field(underPrice),
+            make_field(""),  # misc options: empty Key=Value string, deliberately NO count
+        ]
+        self.sendMsg("".join(fields))
+
+
     def error(self, reqId, *args):
         # Compatible with pre/post TWS API 10.33 error signatures.
         if len(args) >= 4 and isinstance(args[1], int):
@@ -598,7 +635,9 @@ def ib_reprice_option(host, port, client_id, expiry, strike, right, volatility, 
     contract = exact[0].contract
     req_id = 7301
     app.calc_done.clear()
-    app.calculateOptionPrice(req_id, contract, float(volatility), float(underlying), [])
+    # Use the compatibility encoder: current TWS rejects the extra misc-options
+    # count sent by some older Python API clients (error 320).
+    app.calculateOptionPriceCompat(req_id, contract, float(volatility), float(underlying))
     app.calc_done.wait(timeout)
     result = dict(app.calc_results.get(req_id, {}))
     try:
@@ -887,7 +926,7 @@ if ib and model:
 
 
 if source == "TWS / IB GATEWAY" and ib and model:
-    st.markdown("#### IB REPRICING CONTROL · V1.6")
+    st.markdown("#### IB REPRICING CONTROL · V1.6.1")
     st.caption(
         "IB tegen IB: we sturen dezelfde OESX-optie terug naar calculateOptionPrice() met de "
         "IB model-IV en dezelfde SX5E underlying. Rente/dividend/modelaannames blijven bij IB. "
@@ -1251,7 +1290,7 @@ if r and source == "TWS / IB GATEWAY" and ib and model.get("optPrice") is not No
         )
 
 
-        st.markdown("#### IB AUTO EUR CURVE · V1.6")
+        st.markdown("#### IB AUTO EUR CURVE · V1.6.1")
         st.caption(
             "De waarden hieronder komen uit de EUR Interest Rate Navigator-screenshot van 28-09-2026. "
             "IB documenteert deze tabel als simple time-deposit rates op 360-dagenbasis en zet ze intern om "
@@ -1341,4 +1380,4 @@ st.markdown(
     "**Gate 4B-1** IB pricing-rate/curve + IB repricing validation · **Gate 4B-2** Euribor hedge mapping/basis.  "
     "De €600k onderzoeksportefeuille wordt pas daarna gekoppeld. Pas na alle gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V1.6 · research only")
+st.caption("ATLAS RHO · KR01 LAB V1.6.1 · research only")
