@@ -1,0 +1,28 @@
+name: ATLAS RHO attack tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "atlas_rho_mobile_v0_8.py"
+      - "atlas_rho_engine.py"
+      - "test_atlas_rho_attack.py"
+      - ".github/workflows/atlas-rho-attack.yml"
+  workflow_dispatch:
+
+jobs:
+  attack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Existing parity regression
+        run: python test_atlas_rho_parity.py
+      - name: Destructive attack suite
+        run: python test_atlas_rho_attack.py
