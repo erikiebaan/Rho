@@ -138,6 +138,113 @@ def engine_integrity_check():
     if got_base != expected_base or got_analysed != expected_analysed:
         raise RuntimeError("ATLAS RHO engine integrity check failed")
 
+EXEC_DEFAULTS = {
+    "outright_spread_bp":0.5,
+    "pack_spread_bp":0.5,
+    "bundle_2y_spread_bp":0.5,
+    "bundle_3y_spread_bp":0.625,
+    "bundle_4y_spread_bp":0.625,
+    "bundle_5y_spread_bp":0.625,
+    "bundle_6y_spread_bp":0.625,
+    "outright_fee":0.0,
+    "strategy_fee":0.0,
+}
+
+def _quarter_gap_months(a,b):
+    return (b.year-a.year)*12 + (b.month-a.month)
+
+def _strategy_name(L):
+    return "Pack" if L==4 else f"{L//4}Y Bundle"
+
+def execution_strategy_universe(contracts):
+    """Exact V17 pack/bundle universe, adapted to the mobile contract list."""
+    allowed=(4,8,12,16,20,24)
+    universe=[]
+    for L in allowed:
+        for st in range(0,len(contracts)-L+1):
+            window=contracts[st:st+L]
+            if any(x[2]!="QUARTER" for x in window):
+                continue
+            months=[x[0] for x in window]
+            if any(_quarter_gap_months(months[i],months[i+1])!=3 for i in range(L-1)):
+                continue
+            universe.append((_strategy_name(L),st,L))
+    return universe
+
+def execution_order_cost(order,assumptions):
+    name,st,L,q=order
+    qty=abs(int(q))
+    if name=="Outright":
+        spread=float(assumptions["outright_spread_bp"])
+        fee=float(assumptions.get("outright_fee",0.0))
+    elif name=="Pack":
+        spread=float(assumptions["pack_spread_bp"])
+        fee=float(assumptions.get("strategy_fee",0.0))
+    else:
+        years=L//4
+        spread=float(assumptions[f"bundle_{years}y_spread_bp"])
+        fee=float(assumptions.get("strategy_fee",0.0))
+    return qty*(spread/2.0)*KR01_PER_FUTURE + qty*fee
+
+def optimize_exact_execution(contracts,required,assumptions):
+    """V17 execution principle: minimize cost subject to exact leg-for-leg reconstruction."""
+    from scipy.optimize import milp, LinearConstraint, Bounds
+    from scipy.sparse import lil_matrix
+
+    req=np.asarray([int(x) for x in required],dtype=float)
+    n=len(req)
+    instruments=[("Outright",i,1) for i in range(n)]
+    instruments += execution_strategy_universe(contracts)
+    m=len(instruments)
+
+    cost=np.zeros(2*m)
+    A=lil_matrix((n,2*m),dtype=float)
+    for j,(name,st,L) in enumerate(instruments):
+        unit=execution_order_cost((name,st,L,1),assumptions)
+        cost[j]=unit
+        cost[m+j]=unit
+        for i in range(st,st+L):
+            A[i,j]=1.0
+            A[i,m+j]=-1.0
+
+    result=milp(
+        c=cost,
+        integrality=np.ones(2*m),
+        bounds=Bounds(np.zeros(2*m),np.full(2*m,np.inf)),
+        constraints=LinearConstraint(A.tocsr(),req,req),
+        options={"presolve":True},
+    )
+    if not result.success or result.x is None:
+        raise RuntimeError(f"Execution optimizer failed: {result.message}")
+
+    orders=[]
+    for j,(name,st,L) in enumerate(instruments):
+        q=int(round(result.x[j]-result.x[m+j]))
+        if q:
+            orders.append((name,st,L,q))
+    orders.sort(key=lambda x:(x[1],x[2],x[0]))
+
+    recon=[0]*n
+    for name,st,L,q in orders:
+        for i in range(st,st+L):
+            recon[i]+=q
+    target=[int(x) for x in req]
+    if recon!=target:
+        raise RuntimeError("Execution reconciliation failed: quarterly target changed.")
+
+    outright=[("Outright",i,1,int(q)) for i,q in enumerate(req) if int(q)]
+    exact_cost=sum(execution_order_cost(o,assumptions) for o in outright)
+    best_cost=sum(execution_order_cost(o,assumptions) for o in orders)
+    return {
+        "orders":orders,
+        "reconstructed":recon,
+        "reference_cost":exact_cost,
+        "best_cost":best_cost,
+        "saving":exact_cost-best_cost,
+        "difference_dv01":sum((recon[i]-target[i])*KR01_PER_FUTURE for i in range(n)),
+        "reference_orders":len(outright),
+    }
+
 def scenario_values(target,lots):
     residual=target-np.asarray(lots,dtype=float)*KR01_PER_FUTURE
     n=len(residual); z=np.linspace(0,1,n) if n>1 else np.zeros(1)
@@ -230,6 +337,7 @@ h1{font-size:1.65rem!important;margin:0!important;line-height:1.1}
 .maprow{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:.5rem .62rem;margin:.28rem 0}
 .maptop{display:flex;justify-content:space-between;gap:.5rem;font-size:.76rem;font-weight:850}.mapbot{color:#91a8bd;font-size:.66rem;margin-top:.18rem}
 .rule{background:#09131d;border:1px solid #173653;border-radius:10px;padding:.65rem .72rem;color:#c9d6e2;font-size:.72rem;margin:.35rem 0}\n.curveh{display:grid;grid-template-columns:1fr 74px 74px;gap:.35rem;padding:.1rem .55rem .25rem;color:#70879c;font-size:.57rem;font-weight:900;letter-spacing:.08em}.curver{display:grid;grid-template-columns:1fr 74px 74px;gap:.35rem;align-items:center;background:#0b1825;border:1px solid #173b5c;border-radius:9px;padding:.45rem .55rem;margin:.22rem 0;font-size:.72rem}.cv{text-align:right;font-weight:850}.cb{color:#8fc8ff}.ca{color:#f2f6fb}
+.execsum{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.35rem;margin:.35rem 0}.execk{background:#0b1825;border:1px solid #173b5c;border-radius:9px;padding:.48rem .5rem;text-align:center}.exl{font-size:.52rem;color:#8fa4b8;font-weight:900}.exv{font-size:.88rem;font-weight:900;margin-top:.08rem}.execrow{background:#0b1825;border:1px solid #173b5c;border-radius:9px;padding:.5rem .6rem;margin:.25rem 0}.exectop{display:flex;justify-content:space-between;gap:.5rem;font-size:.76rem;font-weight:900}.execbot{color:#8fa4b8;font-size:.62rem;margin-top:.15rem}
 div[data-testid="stMetric"]{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px}
 div[data-testid="stMetricLabel"]{color:#9db1c4!important}
 div[data-testid="stMetricValue"]{color:#f2f6fb!important}
@@ -325,6 +433,74 @@ with tabs[0]:
         file_name=f"ATLAS_RHO_{r['decision']}_ORDERS.txt",
         mime="text/plain",use_container_width=True
     )
+
+
+    st.markdown('<div class="section">BEST EXACT EXECUTION</div>',unsafe_allow_html=True)
+    st.caption("Zelfde hedge · andere uitvoering. Packs/bundles mogen de kwartaalhedge nooit veranderen.")
+
+    with st.expander("Execution aannames"):
+        ec1,ec2=st.columns(2)
+        outright_spread=ec1.number_input("Outright spread (bp)",min_value=0.0,value=0.5,step=0.125,key="ex_out")
+        pack_spread=ec2.number_input("Pack spread (bp)",min_value=0.0,value=0.5,step=0.125,key="ex_pack")
+        ec3,ec4=st.columns(2)
+        bundle2_spread=ec3.number_input("2Y Bundle spread (bp)",min_value=0.0,value=0.5,step=0.125,key="ex_b2")
+        bundle_long_spread=ec4.number_input("3Y+ Bundle spread (bp)",min_value=0.0,value=0.625,step=0.125,key="ex_bl")
+        fee1,fee2=st.columns(2)
+        outright_fee=fee1.number_input("Outright fee / lot €",min_value=0.0,value=0.0,step=0.10,key="ex_ofee")
+        strategy_fee=fee2.number_input("Strategy fee / unit €",min_value=0.0,value=0.0,step=0.10,key="ex_sfee")
+
+    assumptions={
+        "outright_spread_bp":outright_spread,
+        "pack_spread_bp":pack_spread,
+        "bundle_2y_spread_bp":bundle2_spread,
+        "bundle_3y_spread_bp":bundle_long_spread,
+        "bundle_4y_spread_bp":bundle_long_spread,
+        "bundle_5y_spread_bp":bundle_long_spread,
+        "bundle_6y_spread_bp":bundle_long_spread,
+        "outright_fee":outright_fee,
+        "strategy_fee":strategy_fee,
+    }
+    exec_contracts=[]
+    for (label,kind) in r["contracts"]:
+        d=parse_month(label)
+        exec_contracts.append((d,third_wednesday(d.year,d.month),kind))
+    try:
+        ex=optimize_exact_execution(exec_contracts,selected,assumptions)
+        st.markdown(
+            f'<div class="execsum">'
+            f'<div class="execk"><div class="exl">ORDERS</div><div class="exv">{len(ex["orders"])}</div></div>'
+            f'<div class="execk"><div class="exl">EST. SAVING</div><div class="exv">{euro(max(0,ex["saving"]))}</div></div>'
+            f'<div class="execk"><div class="exl">CURVE Δ</div><div class="exv">{euro(ex["difference_dv01"])}/bp</div></div>'
+            f'</div>',unsafe_allow_html=True
+        )
+        exec_lines=[]
+        for name,stx,L,q in ex["orders"]:
+            action="SELL" if q>0 else "BUY"
+            qty=abs(int(q))
+            first=r["contracts"][stx][0]
+            last=r["contracts"][stx+L-1][0]
+            instrument=(f"3M Euribor {first}" if name=="Outright" else name)
+            period=(first if L==1 else f"{first} → {last}")
+            exec_lines.append(f"{instrument} | {action} | {qty} | {period}")
+            st.markdown(
+                f'<div class="execrow"><div class="exectop"><span>{instrument}</span>'
+                f'<span class="{"sell" if action=="SELL" else "buy"}">{action} {qty}</span></div>'
+                f'<div class="execbot">{period} · exacte reconstructie</div></div>',
+                unsafe_allow_html=True
+            )
+        st.markdown(
+            f'<div class="reason"><b>CONTROLE ✓</b> · kwartaalverschil €0/bp. '
+            f'All-outright: {ex["reference_orders"]} orders, est. {euro(ex["reference_cost"])} · '
+            f'Best exact: {len(ex["orders"])} orders, est. {euro(ex["best_cost"])}.</div>',
+            unsafe_allow_html=True
+        )
+        st.download_button(
+            "BEST EXECUTION ORDERLIJST",data="\n".join(exec_lines),
+            file_name=f"ATLAS_RHO_{r['decision']}_BEST_EXECUTION.txt",
+            mime="text/plain",use_container_width=True,key="best_exec_download"
+        )
+    except Exception as exc:
+        st.error(f"Execution optimizer: {exc}")
 
 with tabs[2]:
     st.markdown('<div class="section">CURVE · BASE VS ANALYSED</div>',unsafe_allow_html=True)
