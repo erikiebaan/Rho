@@ -865,6 +865,7 @@ if source == "TWS / IB GATEWAY":
             st.session_state.kr01_ib = find_ib_option(
                 host, port, client_id, lookup_expiry, lookup_strike, lookup_right, market_type
             )
+            st.session_state.kr01_ib_reprice = None
             st.rerun()
         except Exception as e:
             st.error(str(e))
@@ -926,11 +927,10 @@ if ib and model:
 
 
 if source == "TWS / IB GATEWAY" and ib and model:
-    st.markdown("#### IB REPRICING CONTROL · V1.6.1")
+    st.markdown("#### IB REPRICING CONTROL · V1.6.2")
     st.caption(
-        "IB tegen IB: we sturen dezelfde OESX-optie terug naar calculateOptionPrice() met de "
-        "IB model-IV en dezelfde SX5E underlying. Rente/dividend/modelaannames blijven bij IB. "
-        "Dit verandert Base V1 of de hedge niet."
+        "IB tegen IB: dezelfde OESX-optie, streaming model versus calculateOptionPrice(). "
+        "We tonen nu ook de modelvelden terug uit beide IB-routes. Base V1 en de hedge blijven onaangeraakt."
     )
     if st.button("RUN IB REPRICING CONTROL", use_container_width=True):
         try:
@@ -949,20 +949,76 @@ if source == "TWS / IB GATEWAY" and ib and model:
         stream_px = float(model.get("optPrice", float("nan")))
         gap = calc_px - stream_px
         gap_pct = abs(gap) / abs(stream_px) * 100.0 if stream_px else float("nan")
+
         r1, r2, r3 = st.columns(3)
         r1.metric("IB streaming model", f"{stream_px:.3f}")
         r2.metric("IB calculateOptionPrice", f"{calc_px:.3f}")
-        r3.metric("IB↔IB gap", f"{gap:+.3f}", f"{gap_pct:.3f}%")
+        r3.metric("IB↔IB gap", f"{gap:+.3f}")
+        st.markdown(
+            f"<div style='margin-top:-12px;margin-bottom:12px;color:#ff6b6b;font-weight:800'>"
+            f"{gap_pct:.3f}% absolute gap</div>",
+            unsafe_allow_html=True,
+        )
+
+        def _fmt_pct(v):
+            return "—" if v is None or not math.isfinite(float(v)) or float(v) < 0 else f"{float(v)*100:.3f}%"
+
+        def _fmt_num(v, n=4):
+            return "—" if v is None or not math.isfinite(float(v)) or abs(float(v)) > 1e100 else f"{float(v):.{n}f}"
+
+        compare = pd.DataFrame([
+            {
+                "Model field": "Option price",
+                "Streaming": _fmt_num(model.get("optPrice"), 3),
+                "calculateOptionPrice": _fmt_num(rr.get("optPrice"), 3),
+            },
+            {
+                "Model field": "Implied vol",
+                "Streaming": _fmt_pct(model.get("impliedVol")),
+                "calculateOptionPrice": _fmt_pct(rr.get("impliedVol")),
+            },
+            {
+                "Model field": "Underlying",
+                "Streaming": _fmt_num(model.get("undPrice"), 2),
+                "calculateOptionPrice": _fmt_num(rr.get("undPrice"), 2),
+            },
+            {
+                "Model field": "PV dividend",
+                "Streaming": _fmt_num(model.get("pvDividend"), 3),
+                "calculateOptionPrice": _fmt_num(rr.get("pvDividend"), 3),
+            },
+            {
+                "Model field": "Delta",
+                "Streaming": _fmt_num(model.get("delta"), 5),
+                "calculateOptionPrice": _fmt_num(rr.get("delta"), 5),
+            },
+            {
+                "Model field": "Gamma",
+                "Streaming": _fmt_num(model.get("gamma"), 6),
+                "calculateOptionPrice": _fmt_num(rr.get("gamma"), 6),
+            },
+            {
+                "Model field": "Vega",
+                "Streaming": _fmt_num(model.get("vega"), 4),
+                "calculateOptionPrice": _fmt_num(rr.get("vega"), 4),
+            },
+            {
+                "Model field": "Theta",
+                "Streaming": _fmt_num(model.get("theta"), 4),
+                "calculateOptionPrice": _fmt_num(rr.get("theta"), 4),
+            },
+        ])
+        st.dataframe(compare, use_container_width=True, hide_index=True)
         st.caption(
-            f"Inputs naar IB: IV {ib_reprice['input_iv']*100:.3f}% · SX5E {ib_reprice['input_underlying']:.2f}. "
-            "De API-call krijgt géén eigen rente- of dividendcurve van ons mee."
+            f"Call-inputs naar IB: IV {ib_reprice['input_iv']*100:.3f}% · SX5E {ib_reprice['input_underlying']:.2f}. "
+            "Een — betekent dat IB dat veld niet terugstuurde in deze calculateOptionPrice-response."
         )
         if gap_pct <= 0.10:
             st.success("GATE 4B-1 CONTROL PASS · IB repricing reproduceert de IB streaming modelprijs binnen 0,10%.")
         else:
             st.warning(
-                "GATE 4B-1 CONTROL NOG NIET PASS · IB repricing wijkt meer dan 0,10% af. "
-                "Controleer eerst timing/feed/modelinputs; geen hedgeconclusie trekken."
+                "GATE 4B-1 CONTROL NOG NIET PASS · eerst verklaren welk IB-modelveld/context verschilt. "
+                "Geen hedgeconclusie trekken."
             )
 
 st.markdown('<div class="section">2 · EUR CURVE BUCKETS</div>', unsafe_allow_html=True)
@@ -1290,7 +1346,7 @@ if r and source == "TWS / IB GATEWAY" and ib and model.get("optPrice") is not No
         )
 
 
-        st.markdown("#### IB AUTO EUR CURVE · V1.6.1")
+        st.markdown("#### IB AUTO EUR CURVE · V1.6.2")
         st.caption(
             "De waarden hieronder komen uit de EUR Interest Rate Navigator-screenshot van 28-09-2026. "
             "IB documenteert deze tabel als simple time-deposit rates op 360-dagenbasis en zet ze intern om "
@@ -1380,4 +1436,4 @@ st.markdown(
     "**Gate 4B-1** IB pricing-rate/curve + IB repricing validation · **Gate 4B-2** Euribor hedge mapping/basis.  "
     "De €600k onderzoeksportefeuille wordt pas daarna gekoppeld. Pas na alle gates mag `ANALYSED HEDGE` in de hoofdapp worden gevuld."
 )
-st.caption("ATLAS RHO · KR01 LAB V1.6.1 · research only")
+st.caption("ATLAS RHO · KR01 LAB V1.6.2 · research only")
